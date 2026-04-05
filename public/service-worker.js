@@ -3,19 +3,42 @@
  * consider using a Vite PWA plugin or Workbox build step.
  */
 
-const CACHE_NAME = 'freightpower-pwa-v1';
+const CACHE_NAME = 'freightpower-pwa-v2-20260405';
 
 // Core files to keep available offline.
 // Vite's hashed assets are not known here without a build step, so we focus on
 // index + manifest + icons. Runtime caching handles same-origin requests.
 const PRECACHE_URLS = [
-  
-  '/admin/dashboard',
-  '/super-admin/dashboard',
   '/index.html',
   '/manifest.json',
   '/icons/FP-logo-removebg-preview.png',
 ];
+
+function isAppAssetRequest(req, url) {
+  if (url.pathname.startsWith('/assets/')) return true;
+  const d = req.destination;
+  return d === 'script' || d === 'style' || d === 'worker';
+}
+
+async function networkFirst(req, fallbackCacheKey = null) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const network = await fetch(req);
+    if (req.method === 'GET' && network && network.status === 200) {
+      cache.put(req, network.clone());
+      if (fallbackCacheKey) cache.put(fallbackCacheKey, network.clone());
+    }
+    return network;
+  } catch (_) {
+    const cached = await caches.match(req);
+    if (cached) return cached;
+    if (fallbackCacheKey) {
+      const fallback = await caches.match(fallbackCacheKey);
+      if (fallback) return fallback;
+    }
+    throw _;
+  }
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -40,15 +63,15 @@ self.addEventListener('fetch', (event) => {
   // Only handle same-origin requests.
   if (url.origin !== self.location.origin) return;
 
-  // SPA navigation fallback.
+  // Handle only GET requests from this point.
+  if (req.method !== 'GET') return;
+
+  // SPA navigation fallback (network-first).
   if (req.mode === 'navigate') {
     event.respondWith(
       (async () => {
         try {
-          const network = await fetch(req);
-          const cache = await caches.open(CACHE_NAME);
-          cache.put('/index.html', network.clone());
-          return network;
+          return await networkFirst(req, '/index.html');
         } catch (_) {
           const cached = await caches.match('/index.html');
           return cached || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
@@ -58,7 +81,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for static-ish same-origin files.
+  // JS/CSS/hashed app assets should be network-first to prevent stale chunk mismatches.
+  if (isAppAssetRequest(req, url)) {
+    event.respondWith(
+      networkFirst(req).catch(() => new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }))
+    );
+    return;
+  }
+
+  // Cache-first for non-critical same-origin files (images/fonts/etc.).
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
