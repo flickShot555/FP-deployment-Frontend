@@ -285,6 +285,11 @@ export default function AdminDashboard() {
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());
 
+  // Precompute translated labels so list callbacks don't invoke translator directly.
+  const conversationLabel = t(language, 'dashboard.conversation', 'Conversation');
+  const unreadMessageLabel = t(language, 'dashboard.unreadMessage', 'Unread message');
+  const unreadLabel = t(language, 'dashboard.unread', 'Unread');
+
   const goToSection = (key) => {
     setActiveNav(key);
     navigate(`/admin/${key}`);
@@ -719,23 +724,23 @@ export default function AdminDashboard() {
                     <li className="msg-item"><div className="msg-body"><div className="muted">{t(language, 'dashboard.noUnreadChats', 'No unread chats.')}</div></div></li>
                   )}
 
-                  {!recentUnreadLoading && (recentUnreadThreads || []).map((t) => {
-                    const title = t?.display_title || t?.other_display_name || t?.title || t(language, 'dashboard.conversation', 'Conversation');
-                    const preview = t?.last_message?.text || t?.last_message?.message || t?.last_message?.content || t(language, 'dashboard.unreadMessage', 'Unread message');
+                  {!recentUnreadLoading && (recentUnreadThreads || []).map((thread) => {
+                    const title = thread?.display_title || thread?.other_display_name || thread?.title || conversationLabel;
+                    const preview = thread?.last_message?.text || thread?.last_message?.message || thread?.last_message?.content || unreadMessageLabel;
                     return (
-                      <li key={t?.id} className="msg-item">
+                      <li key={thread?.id} className="msg-item">
                         <button
                           type="button"
                           onClick={() => {
-                            setInitialThreadId(t?.id || null);
+                            setInitialThreadId(thread?.id || null);
                             goToSection('messages');
                           }}
                           style={{ display: 'flex', gap: 10, width: '100%', textAlign: 'left', border: 0, background: 'transparent', padding: 0, cursor: 'pointer' }}
                         >
-                          <img className="msg-avatar" src={t?.other_photo_url || 'https://www.gravatar.com/avatar/?d=mp'} alt="avatar" />
+                          <img className="msg-avatar" src={thread?.other_photo_url || 'https://www.gravatar.com/avatar/?d=mp'} alt="avatar" />
                           <div className="msg-body">
                             <div className="msg-head"><strong>{title}</strong> <span className="muted">{String(preview).slice(0, 60)}</span></div>
-                            <div className="muted">{t(language, 'dashboard.unread', 'Unread')}</div>
+                            <div className="muted">{unreadLabel}</div>
                           </div>
                         </button>
                       </li>
