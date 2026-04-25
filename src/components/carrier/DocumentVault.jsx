@@ -3,53 +3,44 @@ import useMediaQuery from '../../hooks/useMediaQuery';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../config';
 import { AUTO_REFRESH_MS } from '../../constants/refresh';
-import { useTr } from '../../i18n/useTr';
 import Toast from '../common/Toast';
 import '../../styles/carrier/DocumentVault.css';
 
 const folders = [
-  { nameKey: 'documentVault.folders.company', nameFallback: 'Company', type: 'company', docTypes: ['w9_carrier', 'broker_w9', 'other'] },
-  { nameKey: 'documentVault.folders.insurance', nameFallback: 'Insurance', type: 'insurance', docTypes: ['coi_carrier', 'broker_coi'] },
-  { nameKey: 'documentVault.folders.authority', nameFallback: 'Authority', type: 'authority', docTypes: ['mc_cert', 'broker_authority'] },
-  { nameKey: 'documentVault.folders.banking', nameFallback: 'Banking', type: 'banking', docTypes: ['voided_check_carrier', 'broker_banking'] },
-  { nameKey: 'documentVault.folders.safety', nameFallback: 'Safety', type: 'safety', docTypes: ['mvr', 'mvr_release', 'clearinghouse_consent'] },
-  { nameKey: 'documentVault.folders.equipment', nameFallback: 'Equipment', type: 'equipment', docTypes: ['truck_reg', 'trailer_reg', 'cab_card', 'irp_ifta_letter'] },
-  { nameKey: 'documentVault.folders.drivers', nameFallback: 'Drivers', type: 'driver', docTypes: ['cdl', 'medical', 'driver_registration'] },
-  { nameKey: 'documentVault.folders.loadDocuments', nameFallback: 'Load Documents', type: 'load', docTypes: ['rate_confirmation', 'bol', 'pod'] },
-  { nameKey: 'documentVault.folders.ifta2290', nameFallback: 'IFTA / 2290', type: 'ifta', docTypes: ['ifta_license', 'irp_ifta_letter', 'cab_card'] }
+  { name: 'Company', type: 'company', docTypes: ['w9_carrier', 'broker_w9', 'other'] },
+  { name: 'Insurance', type: 'insurance', docTypes: ['coi_carrier', 'broker_coi'] },
+  { name: 'Authority', type: 'authority', docTypes: ['mc_cert', 'broker_authority'] },
+  { name: 'Banking', type: 'banking', docTypes: ['voided_check_carrier', 'broker_banking'] },
+  { name: 'Safety', type: 'safety', docTypes: ['mvr', 'mvr_release', 'clearinghouse_consent'] },
+  { name: 'Equipment', type: 'equipment', docTypes: ['truck_reg', 'trailer_reg', 'cab_card', 'irp_ifta_letter'] },
+  { name: 'Drivers', type: 'driver', docTypes: ['cdl', 'medical', 'driver_registration'] },
+  { name: 'Load Documents', type: 'load', docTypes: ['rate_confirmation', 'bol', 'pod'] },
+  { name: 'IFTA / 2290', type: 'ifta', docTypes: ['ifta_license', 'irp_ifta_letter', 'cab_card'] }
 ];
 
 // Document type mapping
 const DOCUMENT_TYPES = [
-  { value: 'coi', labelKey: 'documentVault.upload.docType.coi', labelFallback: 'Certificate of Insurance (COI)' },
-  { value: 'w9', labelKey: 'myCarrier.upload.docType.w9', labelFallback: 'W-9 Tax Form' },
-  { value: 'mc_authority', labelKey: 'documentVault.upload.docType.mcAuthority', labelFallback: 'MC Authority' },
-  { value: 'cdl', labelKey: 'myCarrier.upload.docType.cdl', labelFallback: 'CDL License' },
-  { value: 'mvr', labelKey: 'myCarrier.upload.docType.mvr', labelFallback: 'Motor Vehicle Record (MVR)' },
-  { value: 'medical_card', labelKey: 'documentVault.upload.docType.medicalCard', labelFallback: 'Medical Card' },
-  { value: 'rate_confirmation', labelKey: 'documentVault.upload.docType.rateConfirmation', labelFallback: 'Rate Confirmation' },
-  { value: 'bol', labelKey: 'documentVault.upload.docType.bol', labelFallback: 'Bill of Lading (BOL)' },
-  { value: 'pod', labelKey: 'documentVault.upload.docType.pod', labelFallback: 'Proof of Delivery (POD)' },
-  { value: 'consent', labelKey: 'myCarrier.upload.docType.consent', labelFallback: 'Consent Form' },
-  { value: 'carrier_broker_agreement', labelKey: 'documentVault.upload.docType.brokerAgreement', labelFallback: 'Broker Agreement' },
-  { value: 'other', labelKey: 'myCarrier.upload.docType.other', labelFallback: 'Other' }
+  { value: 'coi', label: 'Certificate of Insurance (COI)' },
+  { value: 'w9', label: 'W-9 Tax Form' },
+  { value: 'mc_authority', label: 'MC Authority' },
+  { value: 'cdl', label: 'CDL License' },
+  { value: 'mvr', label: 'Motor Vehicle Record (MVR)' },
+  { value: 'medical_card', label: 'Medical Card' },
+  { value: 'rate_confirmation', label: 'Rate Confirmation' },
+  { value: 'bol', label: 'Bill of Lading (BOL)' },
+  { value: 'pod', label: 'Proof of Delivery (POD)' },
+  { value: 'consent', label: 'Consent Form' },
+  { value: 'carrier_broker_agreement', label: 'Broker Agreement' },
+  { value: 'other', label: 'Other' }
 ];
 
 function StatusBadge({ status }) {
-  const { tr } = useTr();
-  const s = String(status || '').trim().toLowerCase();
-  const cls = s === 'valid' ? 'cd-badge green' : s === 'expired' ? 'cd-badge red' : 'cd-badge yellow';
-  const label = s === 'valid'
-    ? tr('documentVault.status.valid', 'Valid')
-    : s === 'expired'
-      ? tr('documentVault.status.expired', 'Expired')
-      : tr('documentVault.status.expiringSoon', 'Expiring Soon');
-  return <span className={cls}>{label}</span>;
+  const cls = status === 'Valid' ? 'cd-badge green' : status === 'Expired' ? 'cd-badge red' : 'cd-badge yellow';
+  return <span className={cls}>{status}</span>;
 }
 
-function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
+function RowActions({ doc, onRefresh }) {
   const isCompact = useMediaQuery('(max-width: 1024px)');
-  const { tr } = useTr();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -66,16 +57,7 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
     if (doc.file_url || doc.download_url) {
       window.open(doc.file_url || doc.download_url, '_blank');
     } else {
-      const name = doc.file_name || doc.name || tr('documentVault.documentFallback', 'Document');
-      const type = docLabel ? docLabel(doc.document_type) : (doc.document_type || tr('common.unknown', 'Unknown'));
-      const status = getDocStatus ? getDocStatus(doc) : (doc.status || 'valid');
-      const expiry = formatDate ? formatDate(doc.expiry_date) : (doc.expiry_date || tr('common.na', 'N/A'));
-      alert(
-        `${tr('documentVault.documentFallback', 'Document')}: ${name}` +
-        `\n${tr('documentVault.typeLabel', 'Type:')} ${type}` +
-        `\n${tr('common.status', 'Status')}: ${tr(`documentVault.status.${status}`, status)}` +
-        `\n${tr('documentVault.expiresLabel', 'Expires:')} ${expiry}`
-      );
+      alert(`Document: ${doc.file_name || doc.name}\nType: ${doc.document_type}\nStatus: ${doc.status}\nExpiry: ${doc.expiry_date || 'N/A'}`);
     }
   };
 
@@ -84,17 +66,16 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
     if (doc.file_url || doc.download_url) {
       const link = document.createElement('a');
       link.href = doc.file_url || doc.download_url;
-      link.download = doc.file_name || doc.name || tr('documentVault.defaultDownloadFilename', 'document.pdf');
+      link.download = doc.file_name || doc.name || 'document.pdf';
       link.target = '_blank';
       link.click();
     } else {
-      alert(`${tr('documentVault.errors.documentUrlUnavailable', 'Document URL not available')}. ${tr('documentVault.errors.contactSupport', 'Please contact support.')}`);
+      alert('Download URL not available. Please contact support.');
     }
   };
 
   const handleShare = async () => {
-    const shareText = `${tr('documentVault.documentFallback', 'Document')}: ${doc.file_name || doc.name}` +
-      `\n${tr('documentVault.typeLabel', 'Type:')} ${docLabel ? docLabel(doc.document_type) : (doc.document_type || tr('common.unknown', 'Unknown'))}`;
+    const shareText = `Document: ${doc.file_name || doc.name}\nType: ${doc.document_type}`;
     if (navigator.share) {
       try {
         await navigator.share({ title: doc.file_name || doc.name, text: shareText });
@@ -106,7 +87,7 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
     } else {
       // Fallback: copy to clipboard
       navigator.clipboard.writeText(shareText);
-      alert(tr('documentVault.actions.copiedToClipboard', 'Document details copied to clipboard!'));
+      alert('Document details copied to clipboard!');
     }
   };
 
@@ -117,9 +98,9 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
   // Desktop: show inline icons. Compact: show ellipsis menu that reveals the same actions.
   const actionsInline = (
     <>
-      <button className="action" title={tr('common.view', 'View')} onClick={handleView}><i className="fa-regular fa-eye" aria-hidden="true" /></button>
-      <button className="action" title={tr('common.download', 'Download')} onClick={handleDownload}><i className="fa-solid fa-download" aria-hidden="true" /></button>
-      <button className="action" title={tr('common.share', 'Share')} onClick={handleShare}><i className="fa-solid fa-share-from-square" aria-hidden="true" /></button>
+      <button className="action" title="View" onClick={handleView}><i className="fa-regular fa-eye" aria-hidden="true" /></button>
+      <button className="action" title="Download" onClick={handleDownload}><i className="fa-solid fa-download" aria-hidden="true" /></button>
+      <button className="action" title="Share" onClick={handleShare}><i className="fa-solid fa-share-from-square" aria-hidden="true" /></button>
       {/* Refresh intentionally disabled per requirement */}
       {/* <button className="action" title="Refresh" onClick={handleRefresh}><i className="fa-solid fa-rotate-right" aria-hidden="true" /></button> */}
     </>
@@ -127,9 +108,9 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
 
   const actionsPopover = (
     <div className="row-actions-popover" role="menu">
-      <button className="action" onClick={handleView} title={tr('common.view', 'View')}><i className="fa-regular fa-eye" aria-hidden="true" /> <span>{tr('common.view', 'View')}</span></button>
-      <button className="action" onClick={handleDownload} title={tr('common.download', 'Download')}><i className="fa-solid fa-download" aria-hidden="true" /> <span>{tr('common.download', 'Download')}</span></button>
-      <button className="action" onClick={handleShare} title={tr('common.share', 'Share')}><i className="fa-solid fa-share-from-square" aria-hidden="true" /> <span>{tr('common.share', 'Share')}</span></button>
+      <button className="action" onClick={handleView} title="View"><i className="fa-regular fa-eye" aria-hidden="true" /> <span>View</span></button>
+      <button className="action" onClick={handleDownload} title="Download"><i className="fa-solid fa-download" aria-hidden="true" /> <span>Download</span></button>
+      <button className="action" onClick={handleShare} title="Share"><i className="fa-solid fa-share-from-square" aria-hidden="true" /> <span>Share</span></button>
       {/* Refresh intentionally disabled per requirement */}
       {/* <button className="action" onClick={handleRefresh} title="Refresh"><i className="fa-solid fa-rotate-right" aria-hidden="true" /> <span>Refresh</span></button> */}
     </div>
@@ -142,7 +123,7 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
       <button
         className="row-actions-menu"
         aria-expanded={open}
-        aria-label={tr('common.showActions', 'Show actions')}
+        aria-label="Show actions"
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen((s) => !s); }}
       >
@@ -155,7 +136,6 @@ function RowActions({ doc, onRefresh, docLabel, getDocStatus, formatDate }) {
 
 export default function DocumentVault() {
   const { currentUser } = useAuth();
-  const { language, tr } = useTr();
   const [refreshing, setRefreshing] = useState(false);
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -177,13 +157,6 @@ export default function DocumentVault() {
     setToast({ type, message, isVisible: true });
   }, []);
 
-  const folderLabel = useCallback((folder) => {
-    if (!folder) return '';
-    return tr(folder.nameKey, folder.nameFallback);
-  }, [tr]);
-
-  const locale = language === 'Spanish' ? 'es-ES' : language === 'Arabic' ? 'ar' : 'en-US';
-
   const normalizeDocType = useCallback((rawType) => {
     const t = String(rawType || '').trim();
     if (!t) return '';
@@ -204,7 +177,6 @@ export default function DocumentVault() {
       BROKER_BANKING: 'broker_banking',
       CDL: 'cdl',
       MEDICAL: 'medical',
-      MEDICAL_CARD: 'medical',
       DRIVER_REGISTRATION: 'driver_registration',
       MVR: 'mvr',
       MVR_RELEASE: 'mvr_release',
@@ -224,33 +196,33 @@ export default function DocumentVault() {
   const docLabel = useCallback((normalizedType) => {
     const t = normalizeDocType(normalizedType);
     const map = {
-      w9_carrier: tr('documentVault.docType.w9Carrier', 'W-9 Tax Form'),
-      broker_w9: tr('documentVault.docType.brokerW9', 'Broker W-9'),
-      coi_carrier: tr('documentVault.docType.coiCarrier', 'Certificate of Insurance (COI)'),
-      broker_coi: tr('documentVault.docType.brokerCoi', 'Broker COI'),
-      mc_cert: tr('documentVault.docType.mcAuthority', 'MC Authority'),
-      broker_authority: tr('documentVault.docType.brokerAuthority', 'Broker Authority'),
-      voided_check_carrier: tr('documentVault.docType.voidedCheck', 'Voided Check'),
-      broker_banking: tr('documentVault.docType.brokerBanking', 'Broker Banking'),
-      cdl: tr('documentVault.docType.cdl', 'CDL License'),
-      medical: tr('documentVault.docType.medicalCard', 'Medical Card'),
-      driver_registration: tr('documentVault.docType.driverRegistration', 'Driver Registration'),
-      mvr: tr('documentVault.docType.mvr', 'Motor Vehicle Record (MVR)'),
-      mvr_release: tr('documentVault.docType.mvrRelease', 'MVR Release'),
-      clearinghouse_consent: tr('documentVault.docType.clearinghouseConsent', 'Clearinghouse Consent'),
-      ifta_license: tr('documentVault.docType.iftaLicense', 'IFTA License'),
-      irp_ifta_letter: tr('documentVault.docType.irpIftaLetter', 'IRP/IFTA Letter'),
-      cab_card: tr('documentVault.docType.cabCard', 'CAB Card'),
-      truck_reg: tr('documentVault.docType.truckRegistration', 'Truck Registration'),
-      trailer_reg: tr('documentVault.docType.trailerRegistration', 'Trailer Registration'),
-      carrier_broker_agreement: tr('documentVault.docType.brokerAgreement', 'Broker Agreement'),
-      rate_confirmation: tr('documentVault.docType.rateConfirmation', 'Rate Confirmation'),
-      bol: tr('documentVault.docType.bol', 'Bill of Lading (BOL)'),
-      pod: tr('documentVault.docType.pod', 'Proof of Delivery (POD)'),
-      other: tr('documentVault.docType.other', 'Other'),
+      w9_carrier: 'W-9 Tax Form',
+      broker_w9: 'Broker W-9',
+      coi_carrier: 'Certificate of Insurance (COI)',
+      broker_coi: 'Broker COI',
+      mc_cert: 'MC Authority',
+      broker_authority: 'Broker Authority',
+      voided_check_carrier: 'Voided Check',
+      broker_banking: 'Broker Banking',
+      cdl: 'CDL License',
+      medical: 'Medical Card',
+      driver_registration: 'Driver Registration',
+      mvr: 'Motor Vehicle Record (MVR)',
+      mvr_release: 'MVR Release',
+      clearinghouse_consent: 'Clearinghouse Consent',
+      ifta_license: 'IFTA License',
+      irp_ifta_letter: 'IRP/IFTA Letter',
+      cab_card: 'CAB Card',
+      truck_reg: 'Truck Registration',
+      trailer_reg: 'Trailer Registration',
+      carrier_broker_agreement: 'Broker Agreement',
+      rate_confirmation: 'Rate Confirmation',
+      bol: 'Bill of Lading (BOL)',
+      pod: 'Proof of Delivery (POD)',
+      other: 'Other',
     };
     return map[t] || String(t || '').replace(/_/g, ' ').toUpperCase();
-  }, [normalizeDocType, tr]);
+  }, [normalizeDocType]);
 
   const getDocUrl = useCallback((doc) => {
     return doc?.file_url || doc?.download_url || '';
@@ -379,13 +351,13 @@ export default function DocumentVault() {
     // Validate file type
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
     if (!allowedTypes.includes(file.type)) {
-      setUploadError(tr('myCarrier.upload.error.invalidType', 'Only PDF, JPG, and PNG files are allowed'));
+      setUploadError('Only PDF, JPG, and PNG files are allowed');
       return;
     }
 
     // Validate file size (25MB max)
     if (file.size > 25 * 1024 * 1024) {
-      setUploadError(tr('myCarrier.upload.error.fileTooLarge', 'File size must be less than 25MB'));
+      setUploadError('File size must be less than 25MB');
       return;
     }
 
@@ -419,28 +391,25 @@ export default function DocumentVault() {
           const okForFolder = folderAllowed.includes(extractedNormalized);
 
           if (!okForFolder) {
-            showToast(
-              'error',
-              `${docLabel(extractedNormalized)} ${tr('documentVault.errors.cannotBeAddedToFolder', 'can not be added to the')} ${folderLabel(expectedFolder)}${tr('documentVault.errors.folderSuffix', ' folder.')}`
-            );
+            showToast('error', `${docLabel(extractedNormalized)} can not be added to the ${expectedFolder.name} folder.`);
           }
         }
 
         const expiryMsg = result.expiry_date
-          ? ` ${tr('documentVault.upload.expiryDetectedPrefix', 'Expiry date detected:')} ${formatDate(result.expiry_date)}`
+          ? ` Expiry date detected: ${result.expiry_date}`
           : '';
-        setUploadSuccess(`${tr('documentVault.upload.success', 'Document uploaded successfully!')}${expiryMsg}`);
+        setUploadSuccess(`Document uploaded successfully!${expiryMsg}`);
         setShowUploadModal(false);
         setSelectedFile(null);
         setSelectedDocType('other');
         fetchDocuments();
         setTimeout(() => setUploadSuccess(''), 5000);
       } else {
-        setUploadError(result.detail || tr('myCarrier.upload.error.uploadFailed', 'Upload failed'));
+        setUploadError(result.detail || 'Failed to upload document');
       }
     } catch (error) {
       console.error('Error uploading document:', error);
-      setUploadError(tr('documentVault.errors.uploadFailedTryAgain', 'Failed to upload document. Please try again.'));
+      setUploadError('Failed to upload document. Please try again.');
     } finally {
       setUploading(false);
     }
@@ -513,7 +482,7 @@ export default function DocumentVault() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
-        setUploadError(tr('documentVault.errors.bulkDownloadFailedTryAgain', 'Bulk download failed. Please try again.'));
+        setUploadError('Bulk download failed. Please try again.');
         return;
       }
       const blob = await res.blob();
@@ -527,38 +496,39 @@ export default function DocumentVault() {
       window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Bulk download error:', e);
-      setUploadError(tr('documentVault.errors.bulkDownloadFailedTryAgain', 'Bulk download failed. Please try again.'));
+      setUploadError('Bulk download failed. Please try again.');
     }
   };
 
   // Get status based on expiry date
   const getDocStatus = (doc) => {
-    if (!doc.expiry_date) return 'valid';
+    if (!doc.expiry_date) return 'Valid';
     const expiry = new Date(doc.expiry_date);
     const now = new Date();
     const daysUntilExpiry = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
 
-    if (daysUntilExpiry < 0) return 'expired';
-    if (daysUntilExpiry <= 30) return 'expiringSoon';
-    return 'valid';
+    if (daysUntilExpiry < 0) return 'Expired';
+    if (daysUntilExpiry <= 30) return 'Expiring Soon';
+    return 'Valid';
   };
 
   // Format date
   const formatDate = (dateStr) => {
-    if (!dateStr) return tr('common.na', 'N/A');
-    const date = new Date(dateStr);
-    if (Number.isNaN(date.getTime())) return tr('common.na', 'N/A');
-    return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric'
+    });
   };
 
   // Format timestamp for upload time
   const formatTimestamp = (timestamp) => {
-    if (!timestamp) return tr('common.na', 'N/A');
+    if (!timestamp) return 'N/A';
     const date = new Date(timestamp);
-    if (Number.isNaN(date.getTime())) return tr('common.na', 'N/A');
-    const d = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
-    const t = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(date);
-    return `${d} ${t}`;
+    return date.toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric'
+    }) + ' ' + date.toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit'
+    });
   };
 
   return (
@@ -573,8 +543,8 @@ export default function DocumentVault() {
       )}
       <header className="fp-header">
         <div className="fp-header-titles">
-          <h2>{tr('documentVault.title', 'Document Vault')}</h2>
-          <p className="fp-subtitle">{tr('documentVault.subtitle', "Organize and manage your company's documents and compliance files")}</p>
+          <h2>Document Vault</h2>
+          <p className="fp-subtitle">Organize and manage your company's documents and compliance files</p>
         </div>
       </header>
 
@@ -596,36 +566,36 @@ export default function DocumentVault() {
         <div style={{ background: 'linear-gradient(#7FA4F6 0%, #3B57A7 100%)', borderRadius: '12px', padding: '20px', color: '#fff' }}>
           <div style={{ fontSize: '14px', opacity: 0.9, marginBottom: '8px' }}>
             <i className="fa-solid fa-shield-halved" style={{ marginRight: '8px' }}></i>
-            {tr('documentVault.complianceScore', 'Compliance Score')}
+            Compliance Score
           </div>
           <div style={{ fontSize: '36px', fontWeight: '700' }}>
             {complianceScore ? `${complianceScore.compliance_score}%` : '—'}
           </div>
           <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>
-            {complianceScore?.is_compliant ? tr('documentVault.compliant', '✓ Compliant') : tr('documentVault.reviewNeeded', 'Review needed')}
+            {complianceScore?.is_compliant ? '✓ Compliant' : 'Review needed'}
           </div>
         </div>
         <div className="div-style-comp">
           <div style={{ fontSize: '14px', marginBottom: '8px' }}>
-            <i className="fa-solid fa-file" style={{ marginRight: '8px' }}></i>{tr('documentVault.totalDocuments', 'Total Documents')}
+            <i className="fa-solid fa-file" style={{ marginRight: '8px' }}></i>Total Documents
           </div>
           <div style={{ fontSize: '28px', fontWeight: '700' }}>{docStats.total}</div>
         </div>
         <div className="div-style-comp">
           <div style={{ fontSize: '14px', color: '#22c55e', marginBottom: '8px' }}>
-            <i className="fa-solid fa-check-circle" style={{ marginRight: '8px' }}></i>{tr('documentVault.status.valid', 'Valid')}
+            <i className="fa-solid fa-check-circle" style={{ marginRight: '8px' }}></i>Valid
           </div>
           <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{docStats.valid}</div>
         </div>
         <div className="div-style-comp">
           <div style={{ fontSize: '14px', color: '#f59e0b', marginBottom: '8px' }}>
-            <i className="fa-solid fa-clock" style={{ marginRight: '8px' }}></i>{tr('documentVault.status.expiringSoon', 'Expiring Soon')}
+            <i className="fa-solid fa-clock" style={{ marginRight: '8px' }}></i>Expiring Soon
           </div>
           <div style={{ fontSize: '28px', fontWeight: '700', color: '#f59e0b' }}>{docStats.expiring}</div>
         </div>
         <div className="div-style-comp">
           <div style={{ fontSize: '14px', color: '#ef4444', marginBottom: '8px' }}>
-            <i className="fa-solid fa-exclamation-triangle" style={{ marginRight: '8px' }}></i>{tr('documentVault.status.expired', 'Expired')}
+            <i className="fa-solid fa-exclamation-triangle" style={{ marginRight: '8px' }}></i>Expired
           </div>
           <div style={{ fontSize: '28px', fontWeight: '700', color: '#ef4444' }}>{docStats.expired}</div>
         </div>
@@ -637,33 +607,33 @@ export default function DocumentVault() {
               {folders.map((f) => {
                 const count = getFolderCount(f);
                 return (
-                  <button key={f.type} className="folder-card" type="button" onClick={() => openFolderModal(f)}>
+                  <button key={f.name} className="folder-card" type="button" onClick={() => openFolderModal(f)}>
                     <div className="folder-card-left">
                       <i className="fa-regular fa-folder" aria-hidden="true"></i>
-                      <span className="folder-card-title">{folderLabel(f)}</span>
+                      <span className="folder-card-title">{f.name}</span>
                     </div>
-                    <div className="folder-card-count">{count} {tr('documentVault.docsShort', 'docs')}</div>
+                    <div className="folder-card-count">{count} docs</div>
                   </button>
                 );
               })}
             </div>
         <div className="dv-toprow">
-          <div className="dv-breadcrumb">{tr('documentVault.title', 'Document Vault')} <span className="muted">/ {tr('documentVault.filter.all', 'All Documents')}</span></div>
+          <div className="dv-breadcrumb">Document Vault <span className="muted">/ All Documents</span></div>
           <div className="dv-actions">
             <button className="btn small-cd" onClick={() => setShowUploadModal(true)}>
               <i className="fa-solid fa-upload" style={{ marginRight: '8px' }}></i>
-              {tr('documentVault.uploadDocuments', 'Upload Documents')}
+              Upload Documents
             </button>
             <button
               className="btn small ghost-cd"
               onClick={() => refreshAll({ showSpinner: true })}
               disabled={refreshing}
-              title={tr('common.refresh', 'Refresh')}
+              title="Refresh"
             >
               <i className={`fa-solid ${refreshing ? 'fa-spinner fa-spin' : 'fa-rotate-right'}`} style={{ marginRight: '6px' }}></i>
-              {tr('common.refresh', 'Refresh')}
+              Refresh
             </button>
-            <button className="btn small ghost-cd" onClick={handleBulkDownload}>{tr('documentVault.bulkDownload', 'Bulk Download')}</button>
+            <button className="btn small ghost-cd" onClick={handleBulkDownload}>Bulk Download</button>
           </div>
         </div>
 
@@ -678,8 +648,8 @@ export default function DocumentVault() {
         >
           <div className="dv-drop-inner">
             <div className="dv-cloud"><i className="fa-solid fa-cloud-upload" aria-hidden="true" /></div>
-            <div className="dv-drop-text">{tr('documentVault.dropzone.dragHere', 'Drag and drop files here')}</div>
-            <div className="dv-drop-sub muted">{tr('documentVault.dropzone.orClickBrowse', 'or click to browse files (PDF, JPG, PNG up to 25MB)')}</div>
+            <div className="dv-drop-text">Drag and drop files here</div>
+            <div className="dv-drop-sub muted">or click to browse files (PDF, JPG, PNG up to 25MB)</div>
           </div>
         </div>
 
@@ -694,11 +664,11 @@ export default function DocumentVault() {
               background: '#fff', borderRadius: '12px', padding: '30px',
               maxWidth: '500px', width: '90%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
             }}>
-              <h3 style={{ margin: '0 0 20px', color: '#1e293b' }}>{tr('documentVault.uploadDocument', 'Upload Document')}</h3>
+              <h3 style={{ margin: '0 0 20px', color: '#1e293b' }}>Upload Document</h3>
 
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#374151' }}>
-                  {tr('documentVault.documentTypeRequired', 'Document Type *')}
+                  Document Type *
                 </label>
                 <select
                   value={selectedDocType}
@@ -706,14 +676,14 @@ export default function DocumentVault() {
                   style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #d1d5db' }}
                 >
                   {DOCUMENT_TYPES.map(dt => (
-                    <option key={dt.value} value={dt.value}>{tr(dt.labelKey, dt.labelFallback)}</option>
+                    <option key={dt.value} value={dt.value}>{dt.label}</option>
                   ))}
                 </select>
               </div>
 
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#374151' }}>
-                  {tr('documentVault.selectFileRequired', 'Select File *')}
+                  Select File *
                 </label>
                 <input
                   type="file"
@@ -733,7 +703,7 @@ export default function DocumentVault() {
                 )}
                 <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#6b7280' }}>
                   <i className="fa-solid fa-magic" style={{ marginRight: '6px' }}></i>
-                  {tr('documentVault.expiryAutoExtracted', 'Expiry date will be automatically extracted using AI.')}
+                  Expiry date will be automatically extracted from the document using AI.
                 </p>
               </div>
 
@@ -748,14 +718,14 @@ export default function DocumentVault() {
                   onClick={() => { setShowUploadModal(false); setUploadError(''); setSelectedFile(null); }}
                   style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}
                 >
-                  {tr('common.cancel', 'Cancel')}
+                  Cancel
                 </button>
                 <button
                   onClick={() => {
                     if (selectedFile) {
                       handleFileUpload(selectedFile);
                     } else {
-                      setUploadError(tr('myCarrier.upload.error.selectFile', 'Please select a file'));
+                      setUploadError('Please select a file to upload');
                     }
                   }}
                   disabled={uploading || !selectedFile}
@@ -774,12 +744,12 @@ export default function DocumentVault() {
                   {uploading ? (
                     <>
                       <i className="fa-solid fa-spinner fa-spin"></i>
-                      {tr('common.uploading', 'Uploading…')}
+                      Uploading...
                     </>
                   ) : (
                     <>
                       <i className="fa-solid fa-upload"></i>
-                      {tr('common.upload', 'Upload')}
+                      Upload
                     </>
                   )}
                 </button>
@@ -792,18 +762,18 @@ export default function DocumentVault() {
           {loading ? (
             <div style={{ padding: '40px', textAlign: 'center' }}>
               <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '2rem', color: '#3b82f6' }}></i>
-              <p style={{ marginTop: '10px', color: '#64748b' }}>{tr('documentVault.loadingDocuments', 'Loading documents...')}</p>
+              <p style={{ marginTop: '10px', color: '#64748b' }}>Loading documents...</p>
             </div>
           ) : (
           <table className="dv-table">
             <thead>
               <tr>
-                <th>{tr('documentVault.table.fileName', 'File name')}</th>
-                <th>{tr('documentVault.table.type', 'Type')}</th>
-                <th>{tr('documentVault.table.expiryDate', 'Expiry date')}</th>
-                <th>{tr('documentVault.table.status', 'Status')}</th>
-                <th>{tr('documentVault.table.lastUpdated', 'Last updated')}</th>
-                <th className="c-actions">{tr('documentVault.table.actions', 'Actions')}</th>
+                <th>File name</th>
+                <th>Type</th>
+                <th>Expiry date</th>
+                <th>Status</th>
+                <th>Last updated</th>
+                <th className="c-actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -811,7 +781,7 @@ export default function DocumentVault() {
                 <tr>
                   <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
                     <i className="fa-regular fa-folder-open" style={{ fontSize: '2rem', marginBottom: '10px', display: 'block' }}></i>
-                    {tr('documentVault.table.emptyPrefix', 'No documents uploaded yet. Click')} "{tr('documentVault.uploadDocuments', 'Upload Documents')}" {tr('documentVault.table.emptySuffix', 'to get started.')}
+                    No documents uploaded yet. Click "Upload Documents" to get started.
                   </td>
                 </tr>
               ) : (
@@ -826,7 +796,7 @@ export default function DocumentVault() {
                   <td><StatusBadge status={getDocStatus(d)} /></td>
                   <td>{formatTimestamp(d.uploaded_at || d.created_at || d.updated_at || d.updated)}</td>
                   <td className="c-actions">
-                    <RowActions doc={d} onRefresh={fetchDocuments} docLabel={docLabel} getDocStatus={getDocStatus} formatDate={formatDate} />
+                    <RowActions doc={d} onRefresh={fetchDocuments} />
                   </td>
                 </tr>
               ))
@@ -871,10 +841,10 @@ export default function DocumentVault() {
             >
               <div style={{ padding: '16px 18px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ fontWeight: 700, color: '#111827' }}>
-                  {folderLabel(selectedFolder)} ({folderDocs.length})
+                  {selectedFolder.name} ({folderDocs.length})
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <button className="btn small ghost-cd" type="button" onClick={closeFolderModal}>{tr('common.close', 'Close')}</button>
+                  <button className="btn small ghost-cd" type="button" onClick={closeFolderModal}>Close</button>
                 </div>
               </div>
 
@@ -890,14 +860,14 @@ export default function DocumentVault() {
                     background: '#fafafa'
                   }}
                 >
-                  {tr('documentVault.folderModal.dropHere', 'Drag and drop a file here to upload into this folder')}
+                  Drag and drop a file here to upload into this folder
                 </div>
               </div>
 
               <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '360px 1fr', minHeight: 0 }}>
                 <div style={{ borderRight: '1px solid #e5e7eb', overflow: 'auto' }}>
                   {folderDocs.length === 0 ? (
-                    <div style={{ padding: '18px', color: '#64748b' }}>{tr('documentVault.folderModal.empty', 'No documents in this folder.')}</div>
+                    <div style={{ padding: '18px', color: '#64748b' }}>No documents in this folder.</div>
                   ) : (
                     folderDocs.map((d) => {
                       const active = (previewDoc?.id || previewDoc?.doc_id) === (d.id || d.doc_id);
@@ -928,17 +898,17 @@ export default function DocumentVault() {
 
                 <div style={{ padding: '14px', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                   {!previewDoc ? (
-                    <div style={{ color: '#64748b', padding: '10px' }}>{tr('documentVault.folderModal.selectToPreview', 'Select a document to preview.')}</div>
+                    <div style={{ color: '#64748b', padding: '10px' }}>Select a document to preview.</div>
                   ) : (
                     <div style={{ flex: 1, minHeight: 0, border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
                       {getDocUrl(previewDoc) ? (
                         <iframe
-                          title={previewDoc.file_name || previewDoc.filename || tr('documentVault.folderModal.previewTitle', 'Document Preview')}
+                          title={previewDoc.file_name || previewDoc.filename || 'Document Preview'}
                           src={getDocUrl(previewDoc)}
                           style={{ width: '100%', height: '100%', border: 'none' }}
                         />
                       ) : (
-                        <div style={{ padding: '14px', color: '#64748b' }}>{tr('documentVault.folderModal.previewNotAvailable', 'Preview not available for this document.')}</div>
+                        <div style={{ padding: '14px', color: '#64748b' }}>Preview not available for this document.</div>
                       )}
                     </div>
                   )}

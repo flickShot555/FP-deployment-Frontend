@@ -1,148 +1,234 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import '../../styles/carrier/Settings.css';
 import { useAuth } from '../../contexts/AuthContext';
-import { useUserSettings } from '../../contexts/UserSettingsContext';
 import { API_URL } from '../../config';
-import { downloadCsv } from '../../utils/fileDownload';
-import { LANGUAGE_OPTIONS, t } from '../../i18n/translate';
+import tzLookup from 'tz-lookup';
 
 export default function Settings() {
   const { currentUser } = useAuth();
-  const { settings: userSettings, patchSettings, setSettings: setUserSettings } = useUserSettings();
-  const language = userSettings?.language || 'English';
-  const tr = (key, fallback) => t(language, key, fallback);
   const [activeTab, setActiveTab] = useState('company-profile');
   const [userSearchTerm, setUserSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All Status');
   const [loginFilter, setLoginFilter] = useState('Last Login');
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-
-  const [prefsMessage, setPrefsMessage] = useState({ type: '', text: '' });
-  const prefsInFlightRef = useRef(0);
-
-  const [invoicePrefixDraft, setInvoicePrefixDraft] = useState('FPA-');
-  const invoicePrefixTimerRef = useRef(null);
-
-  const logoInputRef = useRef(null);
   const [formData, setFormData] = useState({
     // Company Profile
-    companyName: '',
-    phoneNumber: '',
-    address: '',
-    email: '',
-    companyLogoUrl: '',
+    companyName: 'TransLogistics Inc.',
+    phoneNumber: '(555) 123-4567',
+    address: '1234 Freight Ave, Logistics City, TX 75001',
+    email: 'contact@translogistics.com',
     
     // Federal Information
-    dotNumber: '',
-    mcNumber: '',
-    taxId: '',
+    dotNumber: '2847563',
+    mcNumber: '928475',
+    taxId: 'XX-XXXXXXX23',
     fmcsaSynced: true,
     
     // Banking Information
-    bankName: '',
-    routingNumber: '',
-    accountNumber: '',
+    bankName: 'First National Bank',
+    routingNumber: '••••••••123',
+    accountNumber: '••••••••••4567',
     accountType: 'Business Checking',
     
     // Contact Information
-    dispatchContact: '',
-    safetyContact: '',
-    billingContact: ''
+    dispatchContact: 'dispatch@translogistics.com',
+    safetyContact: 'safety@translogistics.com',
+    billingContact: 'billing@translogistics.com'
   });
 
-  const disabledTabKeys = useMemo(
-    () => new Set(['user-management', 'roles-permissions', 'security', 'api-webhooks']),
-    []
-  );
+  const [prefsLoading, setPrefsLoading] = useState(false);
+  const [prefsSaving, setPrefsSaving] = useState(false);
 
-  const setPrefBusy = (isBusy) => {
-    // ref-counted busy state so rapid updates don't flicker
-    if (!isBusy) {
-      prefsInFlightRef.current = Math.max(0, prefsInFlightRef.current - 1);
-      if (prefsInFlightRef.current === 0) {
-        setTimeout(() => {
-          setPrefsMessage((m) => (m?.type === 'success' ? { type: '', text: '' } : m));
-        }, 1500);
-      }
-      return;
-    }
-    prefsInFlightRef.current += 1;
-  };
-
-  const updatePrefs = async (partial) => {
-    const before = userSettings;
-    try {
-      setPrefsMessage({ type: '', text: '' });
-      setPrefBusy(true);
-
-      // Optimistic UI update so selects/toggles don't snap back while the API call is in-flight.
-      setUserSettings((prev) => {
-        const safePrev = prev || {};
-        const next = { ...safePrev, ...(partial || {}) };
-
-        // Preserve nested structures when a partial update includes sub-objects.
-        if (partial?.notification_preferences && typeof partial.notification_preferences === 'object') {
-          next.notification_preferences = {
-            ...(safePrev.notification_preferences || {}),
-            ...partial.notification_preferences,
-          };
-        }
-
-        if (partial?.notification_channels && typeof partial.notification_channels === 'object') {
-          next.notification_channels = {
-            ...(safePrev.notification_channels || {}),
-            ...partial.notification_channels,
-          };
-        }
-
-        return next;
-      });
-
-      await patchSettings(partial, { requestLabel: 'PATCH /auth/settings (carrier preferences)' });
-      setPrefsMessage({ type: 'success', text: tr('carrierSettings.preferences.saved', 'Preferences saved.') });
-    } catch (e) {
-      console.error(e);
-      if (before) setUserSettings(before);
-      setPrefsMessage({ type: 'error', text: e?.message || tr('carrierSettings.preferences.saveFailed', 'Failed to save preferences') });
-    } finally {
-      setPrefBusy(false);
-    }
-  };
-
-  // Keep invoice prefix draft in sync with remote settings.
-  useEffect(() => {
-    const next = String(prefVal('invoice_prefix', 'FPA-') || 'FPA-');
-    setInvoicePrefixDraft(next);
-  }, [userSettings?.invoice_prefix]);
-
-  const prefVal = (key, fallback) => {
-    const v = userSettings?.[key];
-    return (v === undefined || v === null || v === '') ? fallback : v;
-  };
-
-  const notificationChannels = useMemo(() => {
-    const nc = userSettings?.notification_channels;
-    if (nc && typeof nc === 'object') return nc;
+  const normalizeNotificationPreferencesInAppOnly = (prefs) => {
+    const p = (prefs && typeof prefs === 'object') ? prefs : {};
+    const defaultToTrue = (value) => (value === false ? false : true);
     return {
-      loads: { in_app: true, email: true, sms: false },
-      compliance: { in_app: true, email: true, sms: true },
-      finance: { in_app: true, email: true, sms: false },
+      loads_in_app: defaultToTrue(p.loads_in_app),
+      loads_email: false,
+      loads_sms: false,
+      compliance_in_app: defaultToTrue(p.compliance_in_app),
+      compliance_email: false,
+      compliance_sms: false,
+      finance_in_app: defaultToTrue(p.finance_in_app),
+      finance_email: false,
+      finance_sms: false,
     };
-  }, [userSettings?.notification_channels]);
-
-  const updateNotificationChannel = (category, channel, enabled) => {
-    const next = {
-      ...notificationChannels,
-      [category]: {
-        ...(notificationChannels?.[category] || {}),
-        [channel]: Boolean(enabled),
-      },
-    };
-    updatePrefs({ notification_channels: next });
   };
+
+  const [preferences, setPreferences] = useState(() => {
+    let stored = {};
+    try {
+      stored = JSON.parse(localStorage.getItem('fp_carrier_preferences') || '{}') || {};
+    } catch {
+      stored = {};
+    }
+
+    const storedTheme = (localStorage.getItem('fp_theme_preference') || '').trim().toLowerCase();
+    const theme = storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'device' ? storedTheme : 'device';
+
+    const defaultDocumentExportType = String(stored.defaultDocumentExportType || '').trim().toLowerCase();
+    const normalizedExportType = defaultDocumentExportType === 'pdf' || defaultDocumentExportType === 'json' || defaultDocumentExportType === 'csv'
+      ? defaultDocumentExportType
+      : 'pdf';
+
+    return {
+      language: stored.language || 'English',
+      dateFormat: stored.dateFormat || 'mdy', // mdy | dmy | ymd
+      timeZone: stored.timeZone || '', // IANA time zone name
+      currency: stored.currency || 'USD',
+
+      notificationPreferences: normalizeNotificationPreferencesInAppOnly(stored.notificationPreferences),
+
+      quietHoursStart: stored.quietHoursStart || '10:00 PM',
+      quietHoursEnd: stored.quietHoursEnd || '7:00 AM',
+
+      paymentTerms: stored.paymentTerms || 'Net 30',
+      defaultInvoiceCurrency: stored.defaultInvoiceCurrency || (stored.currency || 'USD'),
+      autoSendInvoices: Boolean(stored.autoSendInvoices),
+
+      theme,
+      defaultView: stored.defaultView || 'My Loads Default View',
+      defaultDocumentExportType: normalizedExportType,
+    };
+  });
+
+  const persistPreferences = (patch) => {
+    setPreferences((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        localStorage.setItem('fp_carrier_preferences', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  const patchAuthSettings = async (update) => {
+    if (!currentUser) return;
+    try {
+      setPrefsSaving(true);
+      const token = await currentUser.getIdToken();
+      const res = await fetch(`${API_URL}/auth/settings`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(update || {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || 'Failed to update preferences');
+      return data;
+    } finally {
+      setPrefsSaving(false);
+    }
+  };
+
+  const detectDeviceTimeZone = async () => {
+    const fallback = () => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      } catch {
+        return '';
+      }
+    };
+
+    if (!('geolocation' in navigator) || typeof navigator.geolocation?.getCurrentPosition !== 'function') {
+      return fallback();
+    }
+
+    return await new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          try {
+            const tz = tzLookup(pos.coords.latitude, pos.coords.longitude);
+            resolve(tz || fallback());
+          } catch {
+            resolve(fallback());
+          }
+        },
+        () => resolve(fallback()),
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60 * 60 * 1000 }
+      );
+    });
+  };
+
+  const applyThemePreference = (pref) => {
+    const normalized = String(pref || '').trim().toLowerCase();
+    const next = normalized === 'light' || normalized === 'dark' || normalized === 'device' ? normalized : 'device';
+    try {
+      localStorage.setItem('fp_theme_preference', next);
+    } catch {
+      // ignore
+    }
+    persistPreferences({ theme: next });
+    window.dispatchEvent(new CustomEvent('fp-theme-preference', { detail: { preference: next } }));
+  };
+
+  useEffect(() => {
+    const run = async () => {
+      if (activeTab !== 'preferences' || !currentUser) return;
+
+      try {
+        setPrefsLoading(true);
+        const token = await currentUser.getIdToken();
+        const res = await fetch(`${API_URL}/auth/settings`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.detail || 'Failed to load preferences');
+
+        persistPreferences({
+          language: data?.language || 'English',
+          dateFormat: data?.date_format || preferences.dateFormat || 'mdy',
+          timeZone: data?.time_zone || preferences.timeZone || '',
+          notificationPreferences:
+            normalizeNotificationPreferencesInAppOnly(
+              (typeof data?.notification_preferences === 'object' && data.notification_preferences)
+                ? data.notification_preferences
+                : preferences.notificationPreferences
+            ),
+        });
+
+        const serverNotifs = (typeof data?.notification_preferences === 'object' && data.notification_preferences)
+          ? data.notification_preferences
+          : null;
+        if (serverNotifs) {
+          const normalized = normalizeNotificationPreferencesInAppOnly(serverNotifs);
+          if (JSON.stringify(normalized) !== JSON.stringify(serverNotifs)) {
+            try {
+              await patchAuthSettings({ notification_preferences: normalized });
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch (e) {
+        setMessage({ type: 'error', text: e?.message || 'Failed to load preferences' });
+      } finally {
+        setPrefsLoading(false);
+      }
+
+      try {
+        const tz = await detectDeviceTimeZone();
+        if (tz && tz !== (preferences.timeZone || '')) {
+          persistPreferences({ timeZone: tz });
+          await patchAuthSettings({ time_zone: tz });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentUser]);
 
   useEffect(() => {
     const run = async () => {
@@ -165,14 +251,12 @@ export default function Settings() {
         const d = data?.data || {};
         setFormData(prev => ({
           ...prev,
-          companyName: (d.companyName ?? ''),
-          phoneNumber: (d.phone ?? ''),
-          address: (d.address ?? ''),
-          email: (d.companyEmail ?? d.email ?? ''),
-          companyLogoUrl: (d.companyLogoUrl ?? ''),
-          dotNumber: (d.dotNumber ?? ''),
-          mcNumber: (d.mcNumber ?? ''),
-          taxId: (d.taxId ?? ''),
+          companyName: d.companyName || prev.companyName || '',
+          phoneNumber: d.phone || prev.phoneNumber || '',
+          address: d.address || prev.address || '',
+          email: d.email || prev.email || '',
+          dotNumber: d.dotNumber || prev.dotNumber || '',
+          mcNumber: d.mcNumber || prev.mcNumber || '',
         }));
       } catch (e) {
         console.error(e);
@@ -381,11 +465,6 @@ export default function Settings() {
         mcNumber: formData.mcNumber,
         phone: formData.phoneNumber,
         address: formData.address,
-
-        // Extended company profile fields
-        companyEmail: formData.email,
-        taxId: formData.taxId,
-        companyLogoUrl: formData.companyLogoUrl,
       };
 
       const resp = await fetch(`${API_URL}/onboarding/update-profile`, {
@@ -415,14 +494,12 @@ export default function Settings() {
         const d = refetchData?.data || {};
         setFormData(prev => ({
           ...prev,
-          companyName: (d.companyName ?? prev.companyName ?? ''),
-          phoneNumber: (d.phone ?? prev.phoneNumber ?? ''),
-          address: (d.address ?? prev.address ?? ''),
-          email: (d.companyEmail ?? d.email ?? prev.email ?? ''),
-          companyLogoUrl: (d.companyLogoUrl ?? prev.companyLogoUrl ?? ''),
-          dotNumber: (d.dotNumber ?? prev.dotNumber ?? ''),
-          mcNumber: (d.mcNumber ?? prev.mcNumber ?? ''),
-          taxId: (d.taxId ?? prev.taxId ?? ''),
+          companyName: d.companyName || prev.companyName || '',
+          phoneNumber: d.phone || prev.phoneNumber || '',
+          address: d.address || prev.address || '',
+          email: d.email || prev.email || '',
+          dotNumber: d.dotNumber || prev.dotNumber || '',
+          mcNumber: d.mcNumber || prev.mcNumber || '',
         }));
       }
     } catch (e) {
@@ -435,46 +512,18 @@ export default function Settings() {
   };
 
   const handleUploadLogo = () => {
-    if (uploadingLogo || savingProfile) return;
-    logoInputRef.current?.click();
+    console.log('Upload logo functionality');
+    // Implementation for logo upload
   };
 
-  const onLogoSelected = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentUser) return;
-    try {
-      setUploadingLogo(true);
-      setMessage({ type: '', text: '' });
-      const token = await currentUser.getIdToken();
-
-      const fd = new FormData();
-      fd.append('file', file);
-
-      const resp = await fetch(`${API_URL}/onboarding/company-logo`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      });
-
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data?.detail || 'Failed to upload logo');
-
-      const url = data?.company_logo_url || data?.companyLogoUrl || data?.url;
-      if (url) {
-        setFormData((prev) => ({ ...prev, companyLogoUrl: url }));
-        setMessage({ type: 'success', text: 'Company logo uploaded successfully.' });
-        setTimeout(() => setMessage({ type: '', text: '' }), 3000);
-      } else {
-        setMessage({ type: 'error', text: 'Upload succeeded but no logo URL returned' });
-      }
-    } catch (err) {
-      console.error(err);
-      setMessage({ type: 'error', text: err?.message || 'Failed to upload logo' });
-    } finally {
-      setUploadingLogo(false);
-      try { e.target.value = ''; } catch (err) { void err; }
-    }
-  };
+  const renderComingSoonPanel = (content) => (
+    <div className="tab-panel settings-coming-soon" aria-disabled="true">
+      <div className="settings-coming-soon__content">{content}</div>
+      <div className="settings-coming-soon__overlay">
+        <div className="settings-coming-soon__label">COMING SOON</div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="settings-container">
@@ -492,13 +541,7 @@ export default function Settings() {
             <button
               key={tab.key}
               className={`marketplace-tab ${activeTab === tab.key ? 'active' : ''}`}
-              onClick={() => {
-                if (disabledTabKeys.has(tab.key)) return;
-                setActiveTab(tab.key);
-              }}
-              disabled={disabledTabKeys.has(tab.key)}
-              aria-disabled={disabledTabKeys.has(tab.key)}
-              title={disabledTabKeys.has(tab.key) ? 'This section is currently disabled' : tab.label}
+              onClick={() => setActiveTab(tab.key)}
             >
               {tab.label}
             </button>
@@ -616,7 +659,6 @@ export default function Settings() {
                 </div>
 
                 {/* Banking Information */}
-                {/*
                 <div className="settings-section">
                   <h3 className="section-title">Banking Information</h3>
                   <div className="form-grid">
@@ -657,7 +699,6 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
-                */}
               </div>
 
               {/* Right Column */}
@@ -667,25 +708,10 @@ export default function Settings() {
                   <h3 className="section-title">Company Logo</h3>
                   <div className="logo-upload-section">
                     <div className="logo-preview">
-                      {formData.companyLogoUrl ? (
-                        <img
-                          src={formData.companyLogoUrl}
-                          alt="Company logo"
-                          style={{ width: 72, height: 72, borderRadius: 14, objectFit: 'cover' }}
-                        />
-                      ) : (
-                        <i className="fa-solid fa-building logo-placeholder"></i>
-                      )}
+                      <i className="fa-solid fa-building logo-placeholder"></i>
                     </div>
-                    <input
-                      ref={logoInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                      style={{ display: 'none' }}
-                      onChange={onLogoSelected}
-                    />
-                    <button className="btn small ghost-cd" onClick={handleUploadLogo} disabled={uploadingLogo}>
-                      {uploadingLogo ? 'Uploading…' : 'Upload Logo'}
+                    <button className="btn small ghost-cd" onClick={handleUploadLogo}>
+                      Upload Logo
                     </button>
                     <p className="upload-help">PNG, JPG up to 5MB</p>
                   </div>
@@ -696,11 +722,27 @@ export default function Settings() {
                   <h3 className="section-title">Contact Information</h3>
                   <div className="contact-info">
                     <div className="contact-item">
-                      <label>Carrier Email</label>
+                      <label>Dispatch Contact</label>
                       <input
                         type="email"
-                        value={formData.email}
-                        onChange={(e) => handleInputChange('email', e.target.value)}
+                        value={formData.dispatchContact}
+                        onChange={(e) => handleInputChange('dispatchContact', e.target.value)}
+                      />
+                    </div>
+                    <div className="contact-item">
+                      <label>Safety Contact</label>
+                      <input
+                        type="email"
+                        value={formData.safetyContact}
+                        onChange={(e) => handleInputChange('safetyContact', e.target.value)}
+                      />
+                    </div>
+                    <div className="contact-item">
+                      <label>Billing Contact</label>
+                      <input
+                        type="email"
+                        value={formData.billingContact}
+                        onChange={(e) => handleInputChange('billingContact', e.target.value)}
                       />
                     </div>
                   </div>
@@ -720,8 +762,8 @@ export default function Settings() {
         )}
 
         {/* Roles & Permissions Tab */}
-        {activeTab === 'roles-permissions' && (
-          <div className="tab-panel">
+        {activeTab === 'roles-permissions' && renderComingSoonPanel(
+          <>
             <div className="roles-header">
               <div className="roles-actions">
                 <button className="btn small ghost-cd">
@@ -871,12 +913,12 @@ export default function Settings() {
                 </div>
               </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* User Management Tab */}
-        {activeTab === 'user-management' && (
-          <div className="tab-panel">
+        {activeTab === 'user-management' && renderComingSoonPanel(
+          <>
             {/* User Statistics */}
             <div className="user-stats">
               <div className="stat-item">
@@ -1169,12 +1211,12 @@ export default function Settings() {
                 ))}
               </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* Security Settings Tab */}
-        {activeTab === 'security' && (
-          <div className="tab-panel">
+        {activeTab === 'security' && renderComingSoonPanel(
+          <>
 
             {/* Authentication Settings */}
             <div className="security-section">
@@ -1242,22 +1284,7 @@ export default function Settings() {
                       <i className="fa-solid fa-file-lines"></i>
                       Security Audit Trail
                     </h4>
-                    <button
-                      className="export-btn-small"
-                      type="button"
-                      onClick={() => {
-                        const rows = [
-                          { title: 'MFA enabled for all users', time: '2 hours ago' },
-                          { title: 'Password reset for John Doe', time: '1 day ago' },
-                          { title: 'Login blocked from unknown IP', time: '2 days ago' },
-                          { title: 'Session timeout updated', time: '3 days ago' },
-                          { title: 'Device registered for Sarah Wilson', time: '1 week ago' },
-                        ];
-                        downloadCsv(`security_audit_trail_${new Date().toISOString().slice(0, 10)}.csv`, rows, ['title', 'time']);
-                      }}
-                    >
-                      Export
-                    </button>
+                    <button className="export-btn-small">Export</button>
                   </div>
 
                   <div className="audit-list">
@@ -1448,12 +1475,12 @@ export default function Settings() {
               <button className="btn small ghost-cd">Cancel</button>
               <button className="btn small-cd">Save Changes</button>
             </div>
-          </div>
+          </>
         )}
 
         {/* API & Webhooks Tab */}
-        {activeTab === 'api-webhooks' && (
-          <div className="tab-panel">
+        {activeTab === 'api-webhooks' && renderComingSoonPanel(
+          <>
 
             {/* API Keys Section */}
             <div className="api-section">
@@ -1618,75 +1645,65 @@ export default function Settings() {
                 </div>
               </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* Preferences Tab */}
         {activeTab === 'preferences' && (
           <div className="tab-panel">
 
-            {prefsMessage.text && (
-              <div
-                className={`profile-message ${prefsMessage.type}`}
-                style={{
-                  padding: '10px 14px',
-                  marginBottom: '12px',
-                  borderRadius: '8px',
-                  backgroundColor: prefsMessage.type === 'success' ? '#d1fae5' : '#fee2e2',
-                  color: prefsMessage.type === 'success' ? '#065f46' : '#991b1b',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
-              >
-                <i className={`fa-solid ${prefsMessage.type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`}></i>
-                {prefsMessage.text}
-              </div>
-            )}
-
             {/* Language & Localization */}
             <div className="preferences-card">
-              <h3>{tr('carrierSettings.localization.title', 'Language & Localization')}</h3>
-              <p>{tr('carrierSettings.localization.subtitle', 'Configure language and localization settings')}</p>
+              <h3> Language & Localization</h3>
+              <p>Configure language and localization settings</p>
               
               <div className="locale-setting">
                 <div className="locale-row">
                   <div className="locale-label">
-                    <label>{tr('carrierSettings.localization.defaultLanguage', 'Default Language')}</label>
+                    <label>Default Language</label>
                   </div>
                   <div className="locale-select">
                     <select
-                      value={prefVal('language', 'English')}
-                      onChange={(e) => updatePrefs({ language: e.target.value })}
+                      value={preferences.language}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={async (e) => {
+                        const value = e.target.value;
+                        persistPreferences({ language: value });
+                        try {
+                          await patchAuthSettings({ language: value });
+                        } catch (err) {
+                          setMessage({ type: 'error', text: err?.message || 'Failed to update language' });
+                        }
+                      }}
                     >
-                      {LANGUAGE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
+                      <option value="English">English</option>
+                      <option value="Spanish">Spanish</option>
+                      <option value="French">French</option>
                     </select>
                   </div>
                 </div>
 
                 <div className="locale-row">
                   <div className="locale-label">
-                    <label>{tr('carrierSettings.localization.dateFormat', 'Date Format')}</label>
+                    <label>Date Format</label>
                   </div>
                   <div className="locale-select">
                     <select
-                      value={(() => {
-                        const df = String(prefVal('date_format', 'mdy')).toLowerCase();
-                        if (df === 'dmy') return 'DD/MM/YYYY';
-                        if (df === 'ymd') return 'YYYY-MM-DD';
-                        return 'MM/DD/YYYY';
-                      })()}
-                      onChange={(e) => {
-                        const v = String(e.target.value || 'MM/DD/YYYY');
-                        const df = v === 'DD/MM/YYYY' ? 'dmy' : v === 'YYYY-MM-DD' ? 'ymd' : 'mdy';
-                        updatePrefs({ date_format: df });
+                      value={preferences.dateFormat}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={async (e) => {
+                        const value = e.target.value;
+                        persistPreferences({ dateFormat: value });
+                        try {
+                          await patchAuthSettings({ date_format: value });
+                        } catch (err) {
+                          setMessage({ type: 'error', text: err?.message || 'Failed to update date format' });
+                        }
                       }}
                     >
-                      <option>MM/DD/YYYY</option>
-                      <option>DD/MM/YYYY</option>
-                      <option>YYYY-MM-DD</option>
+                      <option value="mdy">MM/DD/YYYY</option>
+                      <option value="dmy">DD/MM/YYYY</option>
+                      <option value="ymd">YYYY-MM-DD</option>
                     </select>
                   </div>
                 </div>
@@ -1696,14 +1713,10 @@ export default function Settings() {
                     <label>Time Zone</label>
                   </div>
                   <div className="locale-select">
-                    <select
-                      value={prefVal('time_zone', 'Eastern Time (ET)')}
-                      onChange={(e) => updatePrefs({ time_zone: e.target.value })}
-                    >
-                      <option>Eastern Time (ET)</option>
-                      <option>Central Time (CT)</option>
-                      <option>Mountain Time (MT)</option>
-                      <option>Pacific Time (PT)</option>
+                    <select value={preferences.timeZone || ''} disabled>
+                      <option value={preferences.timeZone || ''}>
+                        {preferences.timeZone || (prefsLoading ? 'Detecting…' : '—')}
+                      </option>
                     </select>
                   </div>
                 </div>
@@ -1714,8 +1727,12 @@ export default function Settings() {
                   </div>
                   <div className="locale-select">
                     <select
-                      value={prefVal('default_currency', 'USD')}
-                      onChange={(e) => updatePrefs({ default_currency: e.target.value })}
+                      value={preferences.currency}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        persistPreferences({ currency: value, defaultInvoiceCurrency: value });
+                      }}
                     >
                       <option value="USD">USD</option>
                       <option value="CAD">CAD</option>
@@ -1746,22 +1763,36 @@ export default function Settings() {
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.loads?.in_app)}
-                          onChange={(e) => updateNotificationChannel('loads', 'in_app', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.loads_in_app)}
+                          disabled={prefsLoading || prefsSaving}
+                          onChange={async (e) => {
+                              const next = normalizeNotificationPreferencesInAppOnly({
+                                ...(preferences.notificationPreferences || {}),
+                                loads_in_app: e.target.checked,
+                              });
+                            persistPreferences({ notificationPreferences: next });
+                            try {
+                              await patchAuthSettings({ notification_preferences: next });
+                            } catch (err) {
+                              setMessage({ type: 'error', text: err?.message || 'Failed to update notification preferences' });
+                            }
+                          }}
                         />
                       </div>
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.loads?.email)}
-                          onChange={(e) => updateNotificationChannel('loads', 'email', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.loads_email)}
+                          disabled
+                          onChange={() => {}}
                         />
                       </div>
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.loads?.sms)}
-                          onChange={(e) => updateNotificationChannel('loads', 'sms', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.loads_sms)}
+                          disabled
+                          onChange={() => {}}
                         />
                       </div>
                     </div>
@@ -1771,22 +1802,36 @@ export default function Settings() {
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.compliance?.in_app)}
-                          onChange={(e) => updateNotificationChannel('compliance', 'in_app', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.compliance_in_app)}
+                          disabled={prefsLoading || prefsSaving}
+                          onChange={async (e) => {
+                              const next = normalizeNotificationPreferencesInAppOnly({
+                                ...(preferences.notificationPreferences || {}),
+                                compliance_in_app: e.target.checked,
+                              });
+                            persistPreferences({ notificationPreferences: next });
+                            try {
+                              await patchAuthSettings({ notification_preferences: next });
+                            } catch (err) {
+                              setMessage({ type: 'error', text: err?.message || 'Failed to update notification preferences' });
+                            }
+                          }}
                         />
                       </div>
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.compliance?.email)}
-                          onChange={(e) => updateNotificationChannel('compliance', 'email', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.compliance_email)}
+                          disabled
+                          onChange={() => {}}
                         />
                       </div>
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.compliance?.sms)}
-                          onChange={(e) => updateNotificationChannel('compliance', 'sms', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.compliance_sms)}
+                          disabled
+                          onChange={() => {}}
                         />
                       </div>
                     </div>
@@ -1796,22 +1841,36 @@ export default function Settings() {
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.finance?.in_app)}
-                          onChange={(e) => updateNotificationChannel('finance', 'in_app', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.finance_in_app)}
+                          disabled={prefsLoading || prefsSaving}
+                          onChange={async (e) => {
+                              const next = normalizeNotificationPreferencesInAppOnly({
+                                ...(preferences.notificationPreferences || {}),
+                                finance_in_app: e.target.checked,
+                              });
+                            persistPreferences({ notificationPreferences: next });
+                            try {
+                              await patchAuthSettings({ notification_preferences: next });
+                            } catch (err) {
+                              setMessage({ type: 'error', text: err?.message || 'Failed to update notification preferences' });
+                            }
+                          }}
                         />
                       </div>
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.finance?.email)}
-                          onChange={(e) => updateNotificationChannel('finance', 'email', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.finance_email)}
+                          disabled
+                          onChange={() => {}}
                         />
                       </div>
                       <div className="channel-checkbox">
                         <input
                           type="checkbox"
-                          checked={Boolean(notificationChannels?.finance?.sms)}
-                          onChange={(e) => updateNotificationChannel('finance', 'sms', e.target.checked)}
+                          checked={Boolean(preferences.notificationPreferences?.finance_sms)}
+                          disabled
+                          onChange={() => {}}
                         />
                       </div>
                     </div>
@@ -1827,8 +1886,9 @@ export default function Settings() {
                   <span>No notifications during these hours</span>
                   <div className="time-selectors">
                     <select
-                      value={prefVal('quiet_hours_start', '10:00 PM')}
-                      onChange={(e) => updatePrefs({ quiet_hours_start: e.target.value })}
+                      value={preferences.quietHoursStart}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => persistPreferences({ quietHoursStart: e.target.value })}
                     >
                       <option>9:00 PM</option>
                       <option>10:00 PM</option>
@@ -1836,8 +1896,9 @@ export default function Settings() {
                     </select>
                     <span>to</span>
                     <select
-                      value={prefVal('quiet_hours_end', '7:00 AM')}
-                      onChange={(e) => updatePrefs({ quiet_hours_end: e.target.value })}
+                      value={preferences.quietHoursEnd}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => persistPreferences({ quietHoursEnd: e.target.value })}
                     >
                       <option>6:00 AM</option>
                       <option>7:00 AM</option>
@@ -1859,38 +1920,7 @@ export default function Settings() {
                     <label>Invoice Prefix</label>
                   </div>
                   <div className="finance-input">
-                    <input
-                      type="text"
-                      value={invoicePrefixDraft}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setInvoicePrefixDraft(v);
-                        if (invoicePrefixTimerRef.current) clearTimeout(invoicePrefixTimerRef.current);
-                        invoicePrefixTimerRef.current = setTimeout(() => {
-                          updatePrefs({ invoice_prefix: v });
-                        }, 600);
-                      }}
-                      onBlur={() => {
-                        if (invoicePrefixTimerRef.current) clearTimeout(invoicePrefixTimerRef.current);
-                        updatePrefs({ invoice_prefix: invoicePrefixDraft });
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="finance-row">
-                  <div className="finance-label">
-                    <label>Numbering Format</label>
-                  </div>
-                  <div className="finance-select">
-                    <select
-                      value={prefVal('invoice_numbering_format', 'Sequential')}
-                      onChange={(e) => updatePrefs({ invoice_numbering_format: e.target.value })}
-                    >
-                      <option>Sequential</option>
-                      <option>Date-based</option>
-                      <option>Custom</option>
-                    </select>
+                    <input type="text" value="INV{LOAD_ID}" readOnly disabled />
                   </div>
                 </div>
 
@@ -1900,13 +1930,14 @@ export default function Settings() {
                   </div>
                   <div className="finance-select">
                     <select
-                      value={prefVal('payment_terms', 'Net 30')}
-                      onChange={(e) => updatePrefs({ payment_terms: e.target.value })}
+                      value={preferences.paymentTerms}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => persistPreferences({ paymentTerms: e.target.value })}
                     >
-                      <option>Net 15</option>
-                      <option>Net 30</option>
-                      <option>Net 45</option>
-                      <option>Net 60</option>
+                      <option value="Net 15">Net 15</option>
+                      <option value="Net 30">Net 30</option>
+                      <option value="Net 45">Net 45</option>
+                      <option value="Net 60">Net 60</option>
                     </select>
                   </div>
                 </div>
@@ -1917,8 +1948,9 @@ export default function Settings() {
                   </div>
                   <div className="finance-select">
                     <select
-                      value={prefVal('default_currency', 'USD')}
-                      onChange={(e) => updatePrefs({ default_currency: e.target.value })}
+                      value={preferences.defaultInvoiceCurrency}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => persistPreferences({ defaultInvoiceCurrency: e.target.value })}
                     >
                       <option value="USD">USD</option>
                       <option value="CAD">CAD</option>
@@ -1932,8 +1964,9 @@ export default function Settings() {
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
-                    checked={Boolean(prefVal('auto_send_invoices_on_complete', false))}
-                    onChange={(e) => updatePrefs({ auto_send_invoices_on_complete: e.target.checked })}
+                    checked={Boolean(preferences.autoSendInvoices)}
+                    disabled={prefsLoading || prefsSaving}
+                    onChange={(e) => persistPreferences({ autoSendInvoices: e.target.checked })}
                   />
                   Auto-send invoices when loads are completed
                 </label>
@@ -1952,12 +1985,13 @@ export default function Settings() {
                   </div>
                   <div className="dashboard-select">
                     <select
-                      value={prefVal('theme_preference', 'Light')}
-                      onChange={(e) => updatePrefs({ theme_preference: e.target.value })}
+                      value={preferences.theme}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => applyThemePreference(e.target.value)}
                     >
-                      <option>Light</option>
-                      <option>Dark</option>
-                      <option>Auto</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                      <option value="device">Device</option>
                     </select>
                   </div>
                 </div>
@@ -1968,28 +2002,30 @@ export default function Settings() {
                   </div>
                   <div className="dashboard-select">
                     <select
-                      value={prefVal('default_view', 'My Loads Default View')}
-                      onChange={(e) => updatePrefs({ default_view: e.target.value })}
+                      value={preferences.defaultView}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => persistPreferences({ defaultView: e.target.value })}
                     >
-                      <option>My Loads Default View</option>
-                      <option>Dashboard Overview</option>
-                      <option>Analytics</option>
+                      <option value="My Loads Default View">My Loads Default View</option>
+                      <option value="Dashboard Overview">Dashboard Overview</option>
+                      <option value="Analytics">Analytics</option>
                     </select>
                   </div>
                 </div>
 
                 <div className="dashboard-row">
                   <div className="dashboard-label">
-                    <label>My Loads Default View</label>
+                    <label>Default Document Export type</label>
                   </div>
                   <div className="dashboard-select">
                     <select
-                      value={prefVal('my_loads_default_view', 'Active')}
-                      onChange={(e) => updatePrefs({ my_loads_default_view: e.target.value })}
+                      value={preferences.defaultDocumentExportType}
+                      disabled={prefsLoading || prefsSaving}
+                      onChange={(e) => persistPreferences({ defaultDocumentExportType: e.target.value })}
                     >
-                      <option>Active</option>
-                      <option>Completed</option>
-                      <option>All Loads</option>
+                      <option value="pdf">PDF</option>
+                      <option value="json">JSON</option>
+                      <option value="csv">CSV</option>
                     </select>
                   </div>
                 </div>
@@ -1997,30 +2033,24 @@ export default function Settings() {
             </div>
 
             {/* Document Handling */}
+            {/*
             <div className="preferences-card">
               <h3>Document Handling</h3>
               <p>Configure document categorization and archival settings</p>
               
               <div className="document-checkboxes">
                 <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(prefVal('auto_categorize_documents', true))}
-                    onChange={(e) => updatePrefs({ auto_categorize_documents: e.target.checked })}
-                  />
+                  <input type="checkbox" defaultChecked />
                   Auto-categorize documents (BOLs, Invoices, Load Agreements)
                 </label>
                 
                 <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(prefVal('auto_archive_completed_documents', false))}
-                    onChange={(e) => updatePrefs({ auto_archive_completed_documents: e.target.checked })}
-                  />
+                  <input type="checkbox" />
                   Auto-archive completed documents
                 </label>
               </div>
             </div>
+            */}
 
           </div>
         )}

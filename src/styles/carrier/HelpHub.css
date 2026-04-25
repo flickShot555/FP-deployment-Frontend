@@ -173,12 +173,6 @@
   font-size: 14px;
   color: #6b7280;
 }
-.ai-header-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .status-indicator {
   width: 8px;
@@ -206,11 +200,6 @@
   align-self: flex-start;
 }
 
-.user-message {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
 .message-avatar {
   width: 32px;
   height: 32px;
@@ -224,19 +213,11 @@
   flex-shrink: 0;
 }
 
-.user-message .message-avatar {
-  background: #2563eb;
-}
-
 .message-content {
   background: #f1f5f9;
   border-radius: 12px;
   padding: 12px 16px;
   max-width: 80%;
-}
-
-.user-message .message-content {
-  background: #dbeafe;
 }
 
 .message-content p {
@@ -356,16 +337,6 @@
   background: #f1f5f9;
   color: #374151;
   border-color: #0ea5e9;
-}
-.quick-command-btn.compact {
-  padding: 8px 10px;
-  min-width: 86px;
-  text-align: center;
-}
-.quick-command-btn.compact.danger {
-  border-color: #fecaca;
-  color: #b42318;
-  background: #fff5f5;
 }
 
 /* My Tickets Styles */
@@ -1336,11 +1307,6 @@ background:linear-gradient(#fff4d9, #fce99e); color:#b68100
   color: #ffffff;
   border-color: #0ea5e9;
 }
-.dark-root .quick-command-btn.compact.danger {
-  background: #3f1d1d;
-  border-color: #7f1d1d;
-  color: #fecaca;
-}
 
 .dark-root .tickets-table th {
   color: #a0aec0;
@@ -1531,13 +1497,6 @@ background:linear-gradient(#fff4d9, #fce99e); color:#b68100
     grid-template-columns: 1fr;
     gap: 16px;
   }
-  .ai-header {
-    flex-wrap: wrap;
-  }
-  .ai-header-actions {
-    margin-left: 0;
-    width: 100%;
-  }
 
   .schedule-layout {
     grid-template-columns: 1fr;
@@ -1647,9 +1606,6 @@ background:linear-gradient(#fff4d9, #fce99e); color:#b68100
 
   .chat-section {
     height: 60vh;
-  }
-  .ai-header-actions {
-    justify-content: flex-start;
   }
 }
 

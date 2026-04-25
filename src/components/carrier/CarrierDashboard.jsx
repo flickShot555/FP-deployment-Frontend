@@ -19,8 +19,6 @@ import Analytics from './Analytics';
 import Calendar from './Calendar';
 import Settings from './Settings';
 import HelpHub from './HelpHub';
-import { useUserSettings } from '../../contexts/UserSettingsContext';
-import { t } from '../../i18n/translate';
 // OnboardingCoach removed - compliance data now shown in Compliance & Safety page
 import logo from '/src/assets/logo.png';
 import resp_logo from '/src/assets/logo_1.png';
@@ -29,42 +27,106 @@ import resp_logo from '/src/assets/logo_1.png';
 
 export default function CarrierDashboard() {
   const { currentUser, logout } = useAuth();
-  const { settings } = useUserSettings();
-  const language = settings?.language || 'English';
-  const locale = language === 'Spanish' ? 'es-ES' : language === 'Arabic' ? 'ar' : 'en-US';
-  const languageCode = language === 'Spanish' ? 'ES' : language === 'Arabic' ? 'AR' : 'EN';
   const navigate = useNavigate();
   const location = useLocation();
   
   // Dashboard stats state
   const [activeLoads, setActiveLoads] = useState({ inProgress: 0, delivered: 0, completed: 0 });
   const [driversCompliance, setDriversCompliance] = useState({ active: 0, expiring: 0, alerts: 0 });
-  const [earnings, setEarnings] = useState({ week: 0, month: 0, factoring: 0 });
+  const [earnings, setEarnings] = useState({ week: '$0', month: '$0', factoring: '$0' });
   const [expiringDocuments, setExpiringDocuments] = useState([]);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [marketplaceLoads, setMarketplaceLoads] = useState([]);
   const [availableDriversCount, setAvailableDriversCount] = useState(0);
   const [vehicleCounts, setVehicleCounts] = useState(null); // aggregated across associated drivers
-  const [carrierInsights, setCarrierInsights] = useState(null);
-  const [carrierInsightsLoading, setCarrierInsightsLoading] = useState(false);
-  const [carrierInsightsError, setCarrierInsightsError] = useState('');
-  const carrierInsightsAbortRef = React.useRef(null);
   
-  const [activeNav, setActiveNav] = useState('home');
+  const [activeNav, setActiveNav] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('fp_carrier_preferences') || '{}') || {};
+      const dv = String(stored.defaultView || '').trim();
+      if (dv === 'Analytics') return 'analytics';
+      if (dv === 'My Loads Default View') return 'my-loads';
+      if (dv === 'Dashboard Overview') return 'home';
+      return 'home';
+    } catch {
+      return 'home';
+    }
+  });
   const [initialThreadId, setInitialThreadId] = useState(null);
   const [activeMarketplaceSection, setActiveMarketplaceSection] = useState('loads');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarDark, setIsSidebarDark] = useState(false);
+  const [themePreference, setThemePreference] = useState(() => {
+    try {
+      const v = String(localStorage.getItem('fp_theme_preference') || '').trim().toLowerCase();
+      return v === 'light' || v === 'dark' || v === 'device' ? v : 'device';
+    } catch {
+      return 'device';
+    }
+  });
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  const fmtMoney = (amt) => {
-    const n = Number(amt || 0);
-    try {
-      return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(n);
-    } catch {
-      return `$${n.toFixed(2)}`;
-    }
-  };
+  // Apply theme preference (light/dark/device) to dashboard.
+  useEffect(() => {
+    let mediaQuery = null;
+    let onChange = null;
+
+    const apply = () => {
+      if (themePreference === 'dark') {
+        setIsDarkMode(true);
+        return;
+      }
+      if (themePreference === 'light') {
+        setIsDarkMode(false);
+        return;
+      }
+      // device
+      try {
+        mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        setIsDarkMode(Boolean(mediaQuery.matches));
+        onChange = (e) => setIsDarkMode(Boolean(e.matches));
+        if (typeof mediaQuery.addEventListener === 'function') {
+          mediaQuery.addEventListener('change', onChange);
+        } else if (typeof mediaQuery.addListener === 'function') {
+          mediaQuery.addListener(onChange);
+        }
+      } catch {
+        setIsDarkMode(false);
+      }
+    };
+
+    apply();
+
+    return () => {
+      if (!mediaQuery || !onChange) return;
+      try {
+        if (typeof mediaQuery.removeEventListener === 'function') {
+          mediaQuery.removeEventListener('change', onChange);
+        } else if (typeof mediaQuery.removeListener === 'function') {
+          mediaQuery.removeListener(onChange);
+        }
+      } catch {
+        // ignore
+      }
+    };
+  }, [themePreference]);
+
+  // Receive theme preference changes from Settings (same-tab custom event).
+  useEffect(() => {
+    const handler = (e) => {
+      const pref = String(e?.detail?.preference || '').trim().toLowerCase();
+      const next = pref === 'light' || pref === 'dark' || pref === 'device' ? pref : 'device';
+      setThemePreference(next);
+      try {
+        localStorage.setItem('fp_theme_preference', next);
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('fp-theme-preference', handler);
+    return () => window.removeEventListener('fp-theme-preference', handler);
+  }, []);
 
   // Messaging unread badge
   const [messagingUnread, setMessagingUnread] = useState(0);
@@ -138,6 +200,11 @@ export default function CarrierDashboard() {
           return { column: 'tendered', statusFlag: 'assigned' };
         }
         return { column: 'tendered', statusFlag: 'unassigned' };
+      };
+
+      const fmtMoney = (amt) => {
+        const n = Number(amt || 0);
+        return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       };
       
       try {
@@ -294,9 +361,9 @@ export default function CarrierDashboard() {
               .reduce((sum, inv) => sum + paidAmount(inv), 0);
 
             setEarnings({
-              week: weekTotal,
-              month: monthTotal,
-              factoring: factoringTotal,
+              week: fmtMoney(weekTotal),
+              month: fmtMoney(monthTotal),
+              factoring: fmtMoney(factoringTotal),
             });
           }
         } catch (error) {
@@ -354,77 +421,6 @@ export default function CarrierDashboard() {
     
     fetchDashboardData();
   }, [currentUser]);
-
-  useEffect(() => {
-    let alive = true;
-    if (!currentUser || activeNav !== 'home') {
-      if (carrierInsightsAbortRef.current) {
-        carrierInsightsAbortRef.current.abort();
-        carrierInsightsAbortRef.current = null;
-      }
-      return;
-    }
-
-    const fetchCarrierInsights = async () => {
-      if (carrierInsightsAbortRef.current) {
-        carrierInsightsAbortRef.current.abort();
-      }
-      const controller = new AbortController();
-      carrierInsightsAbortRef.current = controller;
-      setCarrierInsightsLoading(true);
-      setCarrierInsightsError('');
-      try {
-        const token = await currentUser.getIdToken();
-        const res = await fetch(`${API_URL}/carrier/dashboard/insights`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          if (!alive) return;
-          setCarrierInsightsError(String(body?.detail || 'Failed to load carrier insights'));
-          return;
-        }
-        const data = await res.json();
-        if (!alive) return;
-        setCarrierInsights(data || null);
-      } catch (e) {
-        if (e?.name === 'AbortError' || String(e?.message || '').toLowerCase().includes('request cancelled')) {
-          return;
-        }
-        if (!alive) return;
-        setCarrierInsightsError(String(e?.message || 'Failed to load carrier insights'));
-      } finally {
-        if (carrierInsightsAbortRef.current === controller) {
-          carrierInsightsAbortRef.current = null;
-        }
-        if (alive) setCarrierInsightsLoading(false);
-      }
-    };
-
-    fetchCarrierInsights();
-    const onFocus = () => {
-      if (activeNav === 'home') fetchCarrierInsights();
-    };
-    const onVisibility = () => {
-      if (!document.hidden && activeNav === 'home') fetchCarrierInsights();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibility);
-    const id = setInterval(() => {
-      if (!document.hidden && activeNav === 'home') fetchCarrierInsights();
-    }, 60000);
-    return () => {
-      alive = false;
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibility);
-      clearInterval(id);
-      if (carrierInsightsAbortRef.current) {
-        carrierInsightsAbortRef.current.abort();
-        carrierInsightsAbortRef.current = null;
-      }
-    };
-  }, [activeNav, currentUser]);
 
   // Fetch messaging unread summary once (no polling)
   useEffect(() => {
@@ -651,50 +647,50 @@ export default function CarrierDashboard() {
 
   const navGroups = [
     {
-      title: t(language, 'nav.operations', 'OPERATIONS'),
+      title: 'OPERATIONS',
       items: [
-        { key: 'home', label: t(language, 'nav.home', 'Home'), icon: 'fa-solid fa-house' },
-        { key: 'my-loads', label: t(language, 'nav.myLoads', 'My Loads'), icon: 'fa-solid fa-truck' },
-        { key: 'docs', label: t(language, 'nav.docs', 'Document Vault'), icon: 'fa-solid fa-folder' },
-        { key: 'shippers', label: t(language, 'nav.shippersBrokers', 'My Shippers/Brokers'), icon: 'fa-solid fa-people-group' },
-        { key: 'marketplace', label: t(language, 'nav.marketplace', 'Marketplace'), icon: 'fa-solid fa-store' },
-        { key: 'drivers', label: t(language, 'nav.driversDispatches', 'Drivers & Dispatches'), icon: 'fa-solid fa-route' },
+        { key: 'home', label: 'Home', icon: 'fa-solid fa-house' },
+        { key: 'my-loads', label: 'My Loads', icon: 'fa-solid fa-truck' },
+        { key: 'docs', label: 'Document Vault', icon: 'fa-solid fa-folder' },
+        { key: 'shippers', label: 'My Shippers/Brokers', icon: 'fa-solid fa-people-group' },
+        { key: 'marketplace', label: 'Marketplace', icon: 'fa-solid fa-store' },
+        { key: 'drivers', label: 'Drivers & Dispatches', icon: 'fa-solid fa-route' },
       ]
     },
     {
-      title: t(language, 'nav.finance', 'FINANCE'),
+      title: 'FINANCE',
       items: [
-        { key: 'factoring', label: t(language, 'nav.factoringInvoicing', 'Factoring & Invoicing'), icon: 'fa-solid fa-dollar-sign' },
-        { key: 'integrations', label: t(language, 'nav.integrations', 'Integrations'), icon: 'fa-solid fa-plug' }
+        { key: 'factoring', label: 'Factoring & Invoicing', icon: 'fa-solid fa-dollar-sign' },
+        { key: 'integrations', label: 'Integrations', icon: 'fa-solid fa-plug' }
       ]
     },
     {
-      title: t(language, 'nav.management', 'MANAGEMENT'),
+      title: 'MANAGEMENT',
       items: [
-        { key: 'compliance', label: t(language, 'nav.compliance', 'Compliance & Safety'), icon: 'fa-solid fa-shield-halved' },
-        { key: 'esign', label: t(language, 'nav.esign', 'Consent & eSignature'), icon: 'fa-solid fa-pen-fancy' }
+        { key: 'compliance', label: 'Compliance & Safety', icon: 'fa-solid fa-shield-halved' },
+        { key: 'esign', label: 'Consent & eSignature', icon: 'fa-solid fa-pen-fancy' }
       ]
     },
     {
-      title: t(language, 'nav.collaboration', 'COLLABORATION'),
+      title: 'COLLABORATION',
       items: [
-        { key: 'messaging', label: t(language, 'nav.messaging', 'Messaging'), icon: 'fa-solid fa-envelope' },
-        { key: 'alerts', label: t(language, 'nav.alerts', 'Alerts & Notifications'), icon: 'fa-solid fa-bell' }
+        { key: 'messaging', label: 'Messaging', icon: 'fa-solid fa-envelope' },
+        { key: 'alerts', label: 'Alerts & Notifications', icon: 'fa-solid fa-bell' }
       ]
     },
     {
-      title: t(language, 'nav.insights', 'INSIGHTS'),
+      title: 'INSIGHTS',
       items: [
-        { key: 'analytics', label: t(language, 'nav.analyticsReports', 'Analytics & Reports'), icon: 'fa-solid fa-chart-column' },
-        { key: 'calendar', label: t(language, 'nav.calendar', 'Calendar'), icon: 'fa-solid fa-calendar-days' }
+        { key: 'analytics', label: 'Analytics & Reports', icon: 'fa-solid fa-chart-column' },
+        { key: 'calendar', label: 'Calendar', icon: 'fa-solid fa-calendar-days' }
       ]
     },
     {
-      title: t(language, 'nav.system', 'SYSTEM'),
+      title: 'SYSTEM',
       items: [
-        { key: 'settings', label: t(language, 'nav.settings', 'Settings'), icon: 'fa-solid fa-gear' },
-        { key: 'help', label: t(language, 'nav.helpHub', 'Help Hub'), icon: 'fa-regular fa-circle-question' },
-        { key: 'logout', label: t(language, 'nav.logout', 'Logout'), icon: 'fa-solid fa-right-from-bracket' }
+        { key: 'settings', label: 'Settings', icon: 'fa-solid fa-gear' },
+        { key: 'help', label: 'Help Hub', icon: 'fa-regular fa-circle-question' },
+        { key: 'logout', label: 'Logout', icon: 'fa-solid fa-right-from-bracket' }
       ]
     }
   ];
@@ -719,12 +715,6 @@ export default function CarrierDashboard() {
     }
   };
 
-  const runCarrierInsightAction = (actionTarget) => {
-    const target = String(actionTarget || '').trim();
-    if (!target) return;
-    handleNavClick(target);
-  };
-
   // Handle Report Fraud
   const handleReportFraud = (e) => {
     e?.preventDefault?.();
@@ -734,7 +724,7 @@ export default function CarrierDashboard() {
 
   const handleSubmitReportFraud = async () => {
     if (!reportFraudData.message.trim()) {
-      alert(t(language, 'dashboard.errors.enterMessage', 'Please enter a message'));
+      alert('Please enter a message');
       return;
     }
 
@@ -756,16 +746,16 @@ export default function CarrierDashboard() {
       });
 
       if (response.ok) {
-        alert(t(language, 'dashboard.reportFraudSuccess', 'Fraud report submitted successfully!'));
+        alert('Fraud report submitted successfully!');
         setReportFraudData({ subject: '', message: '' });
         setShowReportFraudModal(false);
       } else {
         const error = await response.json();
-        alert(`${t(language, 'common.errorPrefix', 'Error:')} ${error.detail || t(language, 'dashboard.reportFraudFailed', 'Failed to submit fraud report')}`);
+        alert(`Error: ${error.detail || 'Failed to submit fraud report'}`);
       }
     } catch (error) {
       console.error('Error submitting fraud report:', error);
-      alert(t(language, 'dashboard.reportFraudFailedTryAgain', 'Failed to submit fraud report. Please try again.'));
+      alert('Failed to submit fraud report. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -780,7 +770,7 @@ export default function CarrierDashboard() {
 
   const handleSubmitSuggestEdit = async () => {
     if (!suggestEditData.message.trim()) {
-      alert(t(language, 'dashboard.errors.enterSuggestion', 'Please enter a suggestion'));
+      alert('Please enter a suggestion');
       return;
     }
 
@@ -802,16 +792,16 @@ export default function CarrierDashboard() {
       });
 
       if (response.ok) {
-        alert(t(language, 'dashboard.suggestEditSuccess', 'Edit suggestion submitted successfully!'));
+        alert('Edit suggestion submitted successfully!');
         setSuggestEditData({ subject: '', message: '' });
         setShowSuggestEditModal(false);
       } else {
         const error = await response.json();
-        alert(`${t(language, 'common.errorPrefix', 'Error:')} ${error.detail || t(language, 'dashboard.suggestEditFailed', 'Failed to submit edit suggestion')}`);
+        alert(`Error: ${error.detail || 'Failed to submit edit suggestion'}`);
       }
     } catch (error) {
       console.error('Error submitting edit suggestion:', error);
-      alert(t(language, 'dashboard.suggestEditFailedTryAgain', 'Failed to submit edit suggestion. Please try again.'));
+      alert('Failed to submit edit suggestion. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -819,42 +809,12 @@ export default function CarrierDashboard() {
 
   // Small router for the inner content area so the sidebar & topbar remain mounted
   function HomeView() {
-    const carrierAiSuggestions = (Array.isArray(carrierInsights?.ai_suggestions) ? carrierInsights.ai_suggestions : [])
-      .map((s, idx) => ({
-        id: String(s?.id || `carrier_ai_${idx}`),
-        title: String(s?.title || ''),
-        detail: String(s?.detail || ''),
-        action_label: String(s?.action_label || 'Open'),
-        action_target: String(s?.action_target || ''),
-      }))
-      .filter((s) => s.title && s.detail);
-
-    const fallbackCarrierAiSuggestions = [
-      {
-        id: 'fallback_compliance',
-        title: t(language, 'dashboard.aiFallback.compliance.title', 'Compliance Renewal'),
-        detail: t(language, 'dashboard.aiFallback.compliance.detail', 'Review expiring carrier documents to avoid operational risk.'),
-        action_label: t(language, 'dashboard.aiFallback.compliance.action', 'Open Compliance'),
-        action_target: 'compliance',
-      },
-      {
-        id: 'fallback_marketplace',
-        title: t(language, 'dashboard.aiFallback.marketplace.title', 'Load Opportunity'),
-        detail: t(language, 'dashboard.aiFallback.marketplace.detail', 'Review marketplace opportunities and assign drivers for active lanes.'),
-        action_label: t(language, 'dashboard.aiFallback.marketplace.action', 'Open Marketplace'),
-        action_target: 'marketplace',
-      },
-    ];
-
-    const renderedCarrierAiSuggestions =
-      carrierAiSuggestions.length > 0 ? carrierAiSuggestions : fallbackCarrierAiSuggestions;
-
     return (
       <>
         <header className="fp-header">
           <div className="fp-header-titles">
-            <h2>{t(language, 'nav.dashboard', 'Dashboard')}</h2>
-            <p className="fp-subtitle">{t(language, 'dashboard.fleetTodaySubtitle', "Welcome back! Here's what's happening with your fleet today.")}</p>
+            <h2>Dashboard</h2>
+            <p className="fp-subtitle">Welcome back! Here's what's happening with your fleet today.</p>
           </div>
         </header>
 
@@ -863,42 +823,42 @@ export default function CarrierDashboard() {
           <section style={{ marginBottom: '20px' }}>
             <div className="card" style={{ padding: '20px', background: '#f8fafc' }}>
               <div className="card-header">
-                <h3><i className="fa-solid fa-building" style={{ marginRight: '8px' }}></i>{t(language, 'dashboard.companyProfile', 'Company Profile')}</h3>
+                <h3><i className="fa-solid fa-building" style={{ marginRight: '8px' }}></i>Company Profile</h3>
                 {complianceScore !== null && (
                   <div className="pill" style={{ background:'#e0f2fe', color:'#075985', padding:'6px 10px', borderRadius:'999px', fontWeight:600 }}>
-                    {t(language, 'dashboard.complianceScoreLabel', 'Compliance Score:')} {Math.round(complianceScore)}%
+                    Compliance Score: {Math.round(complianceScore)}%
                   </div>
                 )}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginTop: '16px' }}>
                 {companyProfile.data.companyName && (
-                  <div><strong>{t(language, 'carrier.profile.companyLabel', 'Company:')}</strong> {companyProfile.data.companyName}</div>
+                  <div><strong>Company:</strong> {companyProfile.data.companyName}</div>
                 )}
                 {companyProfile.data.dotNumber && (
-                  <div><strong>{t(language, 'carrier.profile.dotNumberLabel', 'DOT Number:')}</strong> {companyProfile.data.dotNumber}</div>
+                  <div><strong>DOT Number:</strong> {companyProfile.data.dotNumber}</div>
                 )}
                 {companyProfile.data.mcNumber && (
-                  <div><strong>{t(language, 'carrier.profile.mcNumberLabel', 'MC Number:')}</strong> {companyProfile.data.mcNumber}</div>
+                  <div><strong>MC Number:</strong> {companyProfile.data.mcNumber}</div>
                 )}
                 {companyProfile.data.contactEmail && (
-                  <div><strong>{t(language, 'carrier.profile.contactLabel', 'Contact:')}</strong> {companyProfile.data.contactEmail}</div>
+                  <div><strong>Contact:</strong> {companyProfile.data.contactEmail}</div>
                 )}
                 {companyProfile.data.fleetSize && (
-                  <div><strong>{t(language, 'carrier.profile.fleetSizeLabel', 'Fleet Size:')}</strong> {companyProfile.data.fleetSize} {t(language, 'carrier.profile.units', 'units')}</div>
+                  <div><strong>Fleet Size:</strong> {companyProfile.data.fleetSize} units</div>
                 )}
                 {companyProfile.data.homeTerminal && (
-                  <div><strong>{t(language, 'carrier.profile.homeTerminalLabel', 'Home Terminal:')}</strong> {companyProfile.data.homeTerminal}</div>
+                  <div><strong>Home Terminal:</strong> {companyProfile.data.homeTerminal}</div>
                 )}
               </div>
               {!companyProfile.onboarding_completed && (
                 <div style={{ marginTop: '16px', padding: '12px', background: '#fef3c7', borderRadius: '8px', color: '#92400e' }}>
                   <i className="fa-solid fa-exclamation-triangle" style={{ marginRight: '8px' }}></i>
-                  {t(language, 'carrier.onboardingNotComplete', 'Onboarding not complete.')}{' '}
+                  Onboarding not complete.{' '}
                   <span 
                     onClick={() => setActiveNav('settings')}
                     style={{ color: '#1d4ed8', textDecoration: 'underline', cursor: 'pointer' }}
                   >
-                    {t(language, 'carrier.completeNow', 'Complete now')}
+                    Complete now
                   </span>
                 </div>
               )}
@@ -911,135 +871,114 @@ export default function CarrierDashboard() {
         <section className="fp-grid">
           <div className="card stats-card">
             <div className="card-header">
-              <h3>{t(language, 'dashboard.activeLoads', 'Active Loads')}</h3>
+              <h3>Active Loads</h3>
               <i className="fa-solid fa-truck cd-card-icon small" aria-hidden="true" />
             </div>
             <div className="stats">
-              <div>{t(language, 'common.inProgress', 'In Progress')} <span>{dashboardLoading ? '...' : (activeLoads.inProgress ?? '-')}</span></div>
-              <div>{t(language, 'dashboard.delivered', 'Delivered')} <span>{dashboardLoading ? '...' : (activeLoads.delivered ?? '-')}</span></div>
-              <div>{t(language, 'dashboard.completed', 'Completed')} <span>{dashboardLoading ? '...' : (activeLoads.completed ?? '-')}</span></div>
+              <div>In Progress <span>{dashboardLoading ? '...' : (activeLoads.inProgress ?? '-')}</span></div>
+              <div>Delivered <span>{dashboardLoading ? '...' : (activeLoads.delivered ?? '-')}</span></div>
+              <div>Completed <span>{dashboardLoading ? '...' : (activeLoads.completed ?? '-')}</span></div>
             </div>
           </div>
 
           <div className="card compliance-card">
             <div className="card-header">
-              <h3>{t(language, 'dashboard.driversCompliance', 'Drivers Compliance')}</h3>
+              <h3>Drivers Compliance</h3>
               <i className="fa-solid fa-people-group cd-card-icon small" aria-hidden="true" />
             </div>
             <div className="stats">
-              <div>{t(language, 'dashboard.activeDrivers', 'Active Drivers')} <span>{dashboardLoading ? '...' : (driversCompliance.active ?? '-')}</span></div>
-              <div>{t(language, 'dashboard.expiringLicenses', 'Expiring Licenses')} <span>{dashboardLoading ? '...' : (driversCompliance.expiring ?? '-')}</span></div>
-              <div>{t(language, 'dashboard.safetyAlerts', 'Safety Alerts')} <span>{dashboardLoading ? '...' : (driversCompliance.alerts ?? '-')}</span></div>
+              <div>Active Drivers <span>{dashboardLoading ? '...' : (driversCompliance.active ?? '-')}</span></div>
+              <div>Expiring Licenses <span>{dashboardLoading ? '...' : (driversCompliance.expiring ?? '-')}</span></div>
+              <div>Safety Alerts <span>{dashboardLoading ? '...' : (driversCompliance.alerts ?? '-')}</span></div>
             </div>
           </div>
 
           <div className="card small-card expiring-card">
             <div className="card-header">
-              <h3>{t(language, 'dashboard.expiringDocuments', 'Expiring Documents')}</h3>
+              <h3>Expiring Documents</h3>
               <i className="fa-solid fa-triangle-exclamation cd-card-icon small" aria-hidden="true" />
             </div>
             <div className="expiring-list">
               {dashboardLoading ? (
-                <div style={{ padding: '8px', textAlign: 'center', color: '#6b7280' }}>{t(language, 'common.loading', 'Loading…')}</div>
+                <div style={{ padding: '8px', textAlign: 'center', color: '#6b7280' }}>Loading...</div>
               ) : expiringDocuments.length > 0 ? (
                 expiringDocuments.map((doc, index) => (
                   <div key={index} className={`exp-item pill ${doc.type}`}>
                     <span className="exp-title">{doc.title}</span>
-                    <span className={`exp-days ${doc.type}`}>{doc.days} {doc.days === 1 ? t(language, 'common.day', 'day') : t(language, 'common.days', 'days')}</span>
+                    <span className={`exp-days ${doc.type}`}>{doc.days} {doc.days === 1 ? 'day' : 'days'}</span>
                   </div>
                 ))
               ) : (
-                <div style={{ padding: '8px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>{t(language, 'dashboard.noExpiringDocuments', 'No expiring documents')}</div>
+                <div style={{ padding: '8px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>No expiring documents</div>
               )}
             </div>
           </div>
 
           <div className="card suggestions-card">
             <div className="card-header">
-              <h3>{t(language, 'dashboard.aiSuggestions', 'AI Suggestions')}</h3>
+              <h3>AI Suggestions</h3>
               <i className="fa-solid fa-robot cd-card-icon small" aria-hidden="true" />
             </div>
-            {carrierInsightsLoading && (
-              <div className="muted" style={{ padding: '8px 0' }}>{t(language, 'dashboard.loadingInsights', 'Loading insights...')}</div>
-            )}
-            {carrierInsightsError && (
-              <div className="muted" style={{ padding: '8px 0', color: '#b42318' }}>{carrierInsightsError}</div>
-            )}
             <ul>
-              {renderedCarrierAiSuggestions.slice(0, 3).map((s) => (
-                <li key={s.id} style={{ marginBottom: 10 }}>
-                  <div style={{ fontWeight: 600 }}>{s.title}</div>
-                  <div className="muted" style={{ fontSize: 13 }}>{s.detail}</div>
-                  <button
-                    className="btn ghost-cd small"
-                    style={{ marginTop: 6 }}
-                    onClick={() => runCarrierInsightAction(s.action_target)}
-                  >
-                    {s.action_label || t(language, 'common.open', 'Open')}
-                  </button>
-                </li>
-              ))}
+              <li>Renew insurance in 12 days to avoid compliance issues</li>
+              <li>3 high-paying loads available in your area</li>
             </ul>
           </div>
 
           <div className="card earnings-card">
             <div className="card-header">
-              <h3>{t(language, 'dashboard.earningsOverview', 'Earnings Overview')}</h3>
+              <h3>Earnings Overview</h3>
               <i className="fa-solid fa-dollar-sign cd-card-icon small" aria-hidden="true" />
             </div>
             <div className="stats earnings-stats">
-              <div>{t(language, 'dashboard.thisWeekTitle', 'This Week')} <span className="green">{dashboardLoading ? '...' : fmtMoney(earnings.week)}</span></div>
-              <div>{t(language, 'dashboard.thisMonthTitle', 'This Month')} <span className="green">{dashboardLoading ? '...' : fmtMoney(earnings.month)}</span></div>
-              <div>{t(language, 'dashboard.factoringFunded', 'Factoring Funded')} <span className="blue">{dashboardLoading ? '...' : fmtMoney(earnings.factoring)}</span></div>
+              <div>This Week <span className="green">{dashboardLoading ? '...' : earnings.week}</span></div>
+              <div>This Month <span className="green">{dashboardLoading ? '...' : earnings.month}</span></div>
+              <div>Factoring Funded <span className="blue">{dashboardLoading ? '...' : earnings.factoring}</span></div>
             </div>
           </div>
 
           <div className="card small-card integrations-card">
             <div className="card-header">
-              <h3>{t(language, 'dashboard.integrationsHealth', 'Integrations Health')}</h3>
+              <h3>Integrations Health</h3>
               <i className="fa-solid fa-plug cd-card-icon small" aria-hidden="true" />
             </div>
             <ul className="integrations-list">
-              <li>{t(language, 'dashboard.quickbooks', 'QuickBooks')} <span className="dot green"/></li>
-              <li>{t(language, 'dashboard.eldSystem', 'ELD System')} <span className="dot green"/></li>
-              <li>{t(language, 'dashboard.bankConnection', 'Bank Connection')} <span className="dot orange"/></li>
-              <li>{t(language, 'dashboard.factoring', 'Factoring')} <span className="dot green"/></li>
+              <li>QuickBooks <span className="dot green"/></li>
+              <li>ELD System <span className="dot green"/></li>
+              <li>Bank Connection <span className="dot orange"/></li>
+              <li>Factoring <span className="dot green"/></li>
             </ul>
           </div>
 
           <div className="card recent-messages span-3">
             <div className="card-row">
-              <h3>{t(language, 'dashboard.recentMessages', 'Recent Messages')}</h3>
-              <a className="view-all" onClick={() => setActiveNav('messaging')} style={{ cursor: 'pointer' }}>{t(language, 'common.viewAll', 'View All')}</a>
+              <h3>Recent Messages</h3>
+              <a className="view-all" onClick={() => setActiveNav('messaging')} style={{ cursor: 'pointer' }}>View All</a>
             </div>
             <ul className="recent-list">
               {(dashboardLoading || recentUnreadLoading) ? (
                 <li className="msg-item" style={{ justifyContent: 'center' }}>
-                  <div className="muted">{t(language, 'common.loading', 'Loading…')}</div>
+                  <div className="muted">Loading...</div>
                 </li>
               ) : (recentUnreadThreads || []).length > 0 ? (
-                (recentUnreadThreads || []).map((thread) => {
-                  const title = thread.display_title || thread.other_display_name || thread.title || t(language, 'messaging.conversation', 'Conversation');
-                  const preview = (thread.last_message && thread.last_message.text) ? thread.last_message.text : t(language, 'messaging.unreadMessage', 'Unread message');
-                  const ts = Number(thread.last_message_at || thread.updated_at || 0);
-                  const timeLabel = ts ? new Date(ts * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '';
-                  const roleLabel = String(thread.kind || '').includes('shipper')
-                    ? `- ${t(language, 'roles.shipper', 'Shipper')}`
-                    : String(thread.kind || '').includes('driver')
-                      ? `- ${t(language, 'roles.driver', 'Driver')}`
-                      : '';
+                (recentUnreadThreads || []).map((t) => {
+                  const title = t.display_title || t.other_display_name || t.title || 'Conversation';
+                  const preview = (t.last_message && t.last_message.text) ? t.last_message.text : 'Unread message';
+                  const ts = Number(t.last_message_at || t.updated_at || 0);
+                  const timeLabel = ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                  const roleLabel = String(t.kind || '').includes('shipper') ? '- Shipper' : String(t.kind || '').includes('driver') ? '- Driver' : '';
 
                   return (
                     <li
-                      key={thread.id}
+                      key={t.id}
                       className="msg-item"
                       role="button"
                       tabIndex={0}
-                      onClick={() => { setInitialThreadId(thread.id); setActiveNav('messaging'); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { setInitialThreadId(thread.id); setActiveNav('messaging'); } }}
+                      onClick={() => { setInitialThreadId(t.id); setActiveNav('messaging'); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { setInitialThreadId(t.id); setActiveNav('messaging'); } }}
                       style={{ cursor: 'pointer' }}
                     >
-                      <img className="msg-avatar" src={peopleIcon} alt={t(language, 'messaging.chatAlt', 'chat')} />
+                      <img className="msg-avatar" src={peopleIcon} alt="chat" />
                       <div className="msg-body">
                         <div className="msg-head">
                           <strong>{title}</strong> {roleLabel ? <span className="role">{roleLabel}</span> : null}
@@ -1059,7 +998,7 @@ export default function CarrierDashboard() {
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveNav('messaging'); }}
                   style={{ cursor: 'pointer', justifyContent: 'center' }}
                 >
-                  <div className="muted">{t(language, 'dashboard.noUnreadMessages', 'No unread messages')}</div>
+                  <div className="muted">No unread messages</div>
                 </li>
               )}
             </ul>
@@ -1067,26 +1006,26 @@ export default function CarrierDashboard() {
 
           <div className="card marketplace-snapshot span-3">
             <div className="card-row">
-              <h3>{t(language, 'dashboard.marketplaceSnapshot', 'Marketplace Snapshot')}</h3>
+              <h3>Marketplace Snapshot</h3>
               <button 
                 className="btn ghost-cd small"
                 onClick={() => { setActiveMarketplaceSection('loads'); setActiveNav('marketplace'); }}
-                aria-label={t(language, 'dashboard.viewAllMarketplaceListings', 'View all marketplace listings')}
+                aria-label="View all marketplace listings"
               >
-                {t(language, 'dashboard.viewAllMarketplace', 'View All Marketplace')}
+                View All Marketplace
               </button>
             </div>
             <div className="market-grid">
               <div className="market-col loads">
-                <h4 className="col-title">{t(language, 'dashboard.availableLoads', 'Available Loads')}</h4>
+                <h4 className="col-title">Available Loads</h4>
                 {dashboardLoading ? (
-                  <div style={{ padding: '16px', textAlign: 'center', color: '#6b7280' }}>{t(language, 'common.loading', 'Loading…')}</div>
+                  <div style={{ padding: '16px', textAlign: 'center', color: '#6b7280' }}>Loading...</div>
                 ) : marketplaceLoads.length > 0 ? (
                   marketplaceLoads.map((load, index) => {
-                    const origin = typeof load.origin === 'string' ? load.origin : (load.origin?.city ? `${load.origin.city}, ${load.origin.state}` : t(language, 'loads.origin', 'Origin'));
-                    const destination = typeof load.destination === 'string' ? load.destination : (load.destination?.city ? `${load.destination.city}, ${load.destination.state}` : t(language, 'loads.destination', 'Destination'));
+                    const origin = typeof load.origin === 'string' ? load.origin : (load.origin?.city ? `${load.origin.city}, ${load.origin.state}` : 'Origin');
+                    const destination = typeof load.destination === 'string' ? load.destination : (load.destination?.city ? `${load.destination.city}, ${load.destination.state}` : 'Destination');
                     const rate = load.total_rate || load.linehaul_rate || load.rate || 0;
-                    const pickupDate = load.pickup_date || t(language, 'common.tbd', 'TBD');
+                    const pickupDate = load.pickup_date || 'TBD';
                     
                     return (
                       <div 
@@ -1099,35 +1038,35 @@ export default function CarrierDashboard() {
                       >
                         <div className="load-left">
                           <div className="load-route">{origin} → {destination}</div>
-                          <div className="load-sub muted">{load.load_id || t(language, 'dashboard.load', 'Load')}</div>
+                          <div className="load-sub muted">{load.load_id || 'Load'}</div>
                         </div>
                         <div className="load-right">
-                          <div className="price green">{fmtMoney(rate)}</div>
-                          <div className="pickup muted">{t(language, 'dashboard.pickup', 'Pickup')}: {pickupDate}</div>
+                          <div className="price green">${rate}</div>
+                          <div className="pickup muted">Pickup: {pickupDate}</div>
                         </div>
                       </div>
                     );
                   })
                 ) : (
-                  <div style={{ padding: '16px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>{t(language, 'dashboard.noAvailableLoads', 'No available loads')}</div>
+                  <div style={{ padding: '16px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>No available loads</div>
                 )}
               </div>
 
               <div className="market-col drivers">
-                <h4 className="col-title">{t(language, 'dashboard.availableDrivers', 'Available Drivers')}</h4>
+                <h4 className="col-title">Available Drivers</h4>
                 <div className="driver-count">{dashboardLoading ? '...' : (availableDriversCount || '-')}</div>
-                <div className="driver-sub muted">{t(language, 'dashboard.driversReadyForHire', 'Drivers ready for hire')}</div>
-                <button className="btn small green-btn" onClick={() => { setActiveMarketplaceSection('drivers'); setActiveNav('marketplace'); }}>{t(language, 'dashboard.viewCandidates', 'View Candidates')}</button>
+                <div className="driver-sub muted">Drivers ready for hire</div>
+                <button className="btn small green-btn" onClick={() => { setActiveMarketplaceSection('drivers'); setActiveNav('marketplace'); }}>View Candidates</button>
               </div>
 
               <div className="market-col offers">
-                <h4 className="col-title">{t(language, 'dashboard.serviceOffers', 'Service Offers')}</h4>
+                <h4 className="col-title">Service Offers</h4>
                 <div className="offer-item">
-                  <div className="offer-left">{t(language, 'dashboard.fuelDiscount', 'Fuel Discount')}<div className="muted">{t(language, 'dashboard.saveFuel500', 'Save on fuel at 500+ locations')}</div></div>
-                  <div className="offer-right"><span className="int-status-badge active">15% {t(language, 'common.off', 'OFF')}</span></div>
+                  <div className="offer-left">Fuel Discount<div className="muted">Save on fuel at 500+ locations</div></div>
+                  <div className="offer-right"><span className="int-status-badge active">15% OFF</span></div>
                 </div>
                 <div className="offer-item">
-                  <div className="offer-left">{t(language, 'dashboard.factoringRate', 'Factoring Rate')}<div className="muted">{t(language, 'dashboard.specialRateNewClients', 'Special rate for new clients')}</div></div>
+                  <div className="offer-left">Factoring Rate<div className="muted">Special rate for new clients</div></div>
                   <div className="offer-right"><span className="int-status-badge active">1.5%</span></div>
                 </div>
               </div>
@@ -1136,14 +1075,14 @@ export default function CarrierDashboard() {
 
           <div className="card notifications-card span-3">
             <div className="card-row">
-              <h3>{t(language, 'dashboard.latestNotifications', 'Latest Notifications')}</h3>
-              <a className="view-all" onClick={() => setActiveNav('alerts')} style={{ cursor: 'pointer' }}>{t(language, 'common.viewAll', 'View All')}</a>
+              <h3>Latest Notifications</h3>
+              <a className="view-all" onClick={() => setActiveNav('alerts')} style={{ cursor: 'pointer' }}>View All</a>
             </div>
             <ul className="notifications-list">
               {latestNotifications.length === 0 ? (
                 <li className="notification-item">
                   <div className="note-body">
-                    <div className="note-sub muted">{t(language, 'dashboard.noNotificationsYet', 'No notifications yet.')}</div>
+                    <div className="note-sub muted">No notifications</div>
                   </div>
                 </li>
               ) : (
@@ -1165,10 +1104,10 @@ export default function CarrierDashboard() {
                         <span className={`dot ${dotColor}`} style={{ opacity: notif.is_read ? 0.5 : 1 }} />
                       </div>
                       <div className="note-body">
-                        <div className="note-title">{notif.title || t(language, 'dashboard.notification', 'Notification')}</div>
+                        <div className="note-title">{notif.title || 'Notification'}</div>
                         <div className="note-sub muted">{notif.message || ''}</div>
                       </div>
-                      <div className="note-time">{notif.relative_time || notif.formatted_time || t(language, 'dashboard.recently', 'Recently')}</div>
+                      <div className="note-time">{notif.relative_time || notif.formatted_time || 'Recently'}</div>
                     </li>
                   );
                 })
@@ -1220,15 +1159,15 @@ export default function CarrierDashboard() {
           <div>
             <header className="fp-header">
               <div className="fp-header-titles">
-                <h2>{navGroups.flatMap(g => g.items).find(i => i.key === activeNav)?.label || t(language, 'common.view', 'View')}</h2>
-                <p className="fp-subtitle">{t(language, 'dashboard.placeholder.subtitlePrefix', 'This is the')} {activeNav} {t(language, 'dashboard.placeholder.subtitleSuffix', 'view. Only the inner area changes.')}</p>
+                <h2>{navGroups.flatMap(g => g.items).find(i => i.key === activeNav)?.label || 'View'}</h2>
+                <p className="fp-subtitle">This is the {activeNav} view. Only the inner area changes.</p>
               </div>
             </header>
             <section className="fp-grid">
               <div className="card">
-                <div className="card-header"><h3>{t(language, 'dashboard.placeholder.title', 'Placeholder')}</h3></div>
+                <div className="card-header"><h3>Placeholder</h3></div>
                 <div style={{ padding: 20 }}>
-                  <p>{t(language, 'dashboard.placeholder.bodyPrefix', 'Content for')} <strong>{activeNav}</strong> {t(language, 'dashboard.placeholder.bodySuffix', 'goes here. Replace this with real components as needed.')}</p>
+                  <p>Content for <strong>{activeNav}</strong> goes here. Replace this with real components as needed.</p>
                 </div>
               </div>
             </section>
@@ -1242,7 +1181,7 @@ export default function CarrierDashboard() {
       <div className="fp-topbar">
         <div className="topbar-row topbar-row-1">
           <div className="topbar-left">
-            <button className="hamburger" aria-label={t(language, 'dashboard.openSidebar', 'Open sidebar')} onClick={() => setIsSidebarOpen(true)}>
+            <button className="hamburger" aria-label="Open sidebar" onClick={() => setIsSidebarOpen(true)}>
               <i className="fa-solid fa-bars" />
             </button>
             <div className="brand-block">
@@ -1255,9 +1194,9 @@ export default function CarrierDashboard() {
                 </div>
                 {/* verified moved into sidebar header; topbar inline chips removed */}
                 <div className="ids">
-                  <span className="id-pair"><span className="id-label">{t(language, 'carrier.dot', 'DOT')}:</span> <span className="id-value">{dotNumber || t(language, 'common.na', 'N/A')}</span></span>
+                  <span className="id-pair"><span className="id-label">DOT:</span> <span className="id-value">{dotNumber || 'N/A'}</span></span>
                   <span className="ids-sep">•</span>
-                  <span className="id-pair"><span className="id-label">{t(language, 'carrier.mc', 'MC')}:</span> <span className="id-value">{mcNumber || t(language, 'common.na', 'N/A')}</span></span>
+                  <span className="id-pair"><span className="id-label">MC:</span> <span className="id-value">{mcNumber || 'N/A'}</span></span>
                 </div>
               </div>
             </div>
@@ -1265,16 +1204,16 @@ export default function CarrierDashboard() {
 
           <div className="topbar-right actions-right">
             <div className="actions">
-              <button type="button" className="btn small-cd"><i className="fa-solid fa-link"/> {t(language, 'common.connect', 'Connect')}</button>
-              <button type="button" className="btn ghost-cd small" onClick={handleReportFraud}><i className="fa-solid fa-triangle-exclamation"/> {t(language, 'dashboard.reportFraud', 'Report Fraud')}</button>
-              <button type="button" className="btn ghost-cd small" onClick={handleSuggestEdit}><i className="fa-solid fa-pen"/> {t(language, 'dashboard.suggestEdit', 'Suggest Edit')}</button>
+              <button type="button" className="btn small-cd"><i className="fa-solid fa-link"/> Connect</button>
+              <button type="button" className="btn ghost-cd small" onClick={handleReportFraud}><i className="fa-solid fa-triangle-exclamation"/> Report Fraud</button>
+              <button type="button" className="btn ghost-cd small" onClick={handleSuggestEdit}><i className="fa-solid fa-pen"/> Suggest Edit</button>
             </div>
             {/* mobile-only icons in the first row: visible on small screens */}
             <div className="icons-mobile">
               <div
                 className="notif"
                 role="button"
-                aria-label={t(language, 'alerts.open', 'Open Alerts & Notifications')}
+                aria-label="Open Alerts & Notifications"
                 onClick={() => { setActiveNav('alerts'); setIsSidebarOpen(false); }}
               >
                 <i className="fa-regular fa-bell notif-icon" aria-hidden="true" />
@@ -1284,7 +1223,7 @@ export default function CarrierDashboard() {
                 className="fa-solid fa-robot bot-icon"
                 aria-hidden="true"
                 role="button"
-                aria-label={t(language, 'help.open', 'Open Help Hub')}
+                aria-label="Open Help Hub"
                 onClick={() => { setActiveNav('help'); setIsSidebarOpen(false); }}
               />
               <img
@@ -1292,7 +1231,7 @@ export default function CarrierDashboard() {
                 alt="avatar"
                 className="avatar-img"
                 role="button"
-                aria-label={t(language, 'settings.open', 'Open Settings')}
+                aria-label="Open Settings"
                 onClick={() => { setActiveNav('settings'); setIsSidebarOpen(false); }}
               />
             </div>
@@ -1302,27 +1241,27 @@ export default function CarrierDashboard() {
         <div className="topbar-row topbar-row-2">
           <div className="topbar-left second-left">
             <div className="chips">
-              <span className="chip-cd success">{t(language, 'carrier.dot', 'DOT')} {dotStatusText}{fmcsaLoading ? '…' : ''}</span>
-              <span className="chip-cd info">{t(language, 'carrier.operating', 'Operating')}: {operatingText}</span>
-              <span className="chip-cd yellow">{t(language, 'carrier.safety', 'Safety')}: {safetyText}</span>
-              <span className="chip-cd blue">{t(language, 'carrier.eld', 'ELD')}: {eldText}</span>
+              <span className="chip-cd success">DOT {dotStatusText}{fmcsaLoading ? '…' : ''}</span>
+              <span className="chip-cd info">Operating: {operatingText}</span>
+              <span className="chip-cd yellow">Safety: {safetyText}</span>
+              <span className="chip-cd blue">ELD: {eldText}</span>
             </div>
             <div className="fleet-stats">
-              <span className="fleet-item"><i className="fa-solid fa-truck"/> <strong>{powerUnitsVal ?? dash}</strong> {t(language, 'carrier.powerUnits', 'Power Units')}</span>
-              <span className="fleet-item"><i className="fa-solid fa-snowflake"/> <strong>{reefersVal ?? dash}</strong> {t(language, 'carrier.reefers', 'Reefers')}</span>
-              <span className="fleet-item"><i className="fa-solid fa-box"/> <strong>{dryVansVal ?? dash}</strong> {t(language, 'carrier.dryVans', 'Dry Vans')}</span>
+              <span className="fleet-item"><i className="fa-solid fa-truck"/> <strong>{powerUnitsVal ?? dash}</strong> Power Units</span>
+              <span className="fleet-item"><i className="fa-solid fa-snowflake"/> <strong>{reefersVal ?? dash}</strong> Reefers</span>
+              <span className="fleet-item"><i className="fa-solid fa-box"/> <strong>{dryVansVal ?? dash}</strong> Dry Vans</span>
             </div>
           </div>
 
           <div className="topbar-right">
             <div className="icons">
-              <span className="lang"><i className="fa-solid fa-globe"/> {languageCode}</span>
+              <span className="lang"><i className="fa-solid fa-globe"/> EN</span>
               <div
                 className="notif"
                 id="fp-notif-dropdown-root-2"
                 style={{ position: 'relative' }}
                 role="button"
-                aria-label={t(language, 'alerts.open', 'Open Alerts & Notifications')}
+                aria-label="Open Alerts & Notifications"
               >
                 <button
                   type="button"
@@ -1331,7 +1270,7 @@ export default function CarrierDashboard() {
                     setActiveNav('alerts');
                     setIsSidebarOpen(false);
                   }}
-                  aria-label={t(language, 'alerts.open', 'Open Alerts & Notifications')}
+                  aria-label="Open Alerts & Notifications"
                   style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
                 >
                   <i className="fa-regular fa-bell notif-icon" aria-hidden="true" />
@@ -1342,7 +1281,7 @@ export default function CarrierDashboard() {
                 className="fa-solid fa-robot bot-icon"
                 aria-hidden="true"
                 role="button"
-                aria-label={t(language, 'help.open', 'Open Help Hub')}
+                aria-label="Open Help Hub"
                 onClick={() => { setActiveNav('help'); setIsSidebarOpen(false); }}
               />
               <img
@@ -1350,7 +1289,7 @@ export default function CarrierDashboard() {
                 alt="avatar"
                 className="avatar-img"
                 role="button"
-                aria-label={t(language, 'settings.open', 'Open Settings')}
+                aria-label="Open Settings"
                 onClick={() => { setActiveNav('settings'); setIsSidebarOpen(false); }}
               />
             </div>
@@ -1366,19 +1305,19 @@ export default function CarrierDashboard() {
           </div>
           {/* DOT / MC line for mobile drawer */}
           <div className="ids mobile-ids">
-            <div className="mobile-id-line"><span className="id-pair"><span className="id-label">{t(language, 'carrier.dot', 'DOT')}:</span> <span className="id-value">{dotNumber || t(language, 'common.na', 'N/A')}</span></span></div>
-            <div className="mobile-id-line"><span className="id-pair"><span className="id-label">{t(language, 'carrier.mc', 'MC')}:</span> <span className="id-value">{mcNumber || t(language, 'common.na', 'N/A')}</span></span></div>
+            <div className="mobile-id-line"><span className="id-pair"><span className="id-label">DOT:</span> <span className="id-value">{dotNumber || 'N/A'}</span></span></div>
+            <div className="mobile-id-line"><span className="id-pair"><span className="id-label">MC:</span> <span className="id-value">{mcNumber || 'N/A'}</span></span></div>
           </div>
           <div className="chips sidebar-chips">
-            <span className="chip-cd success">{t(language, 'carrier.dot', 'DOT')} {dotStatusText}{fmcsaLoading ? '…' : ''}</span>
-            <span className="chip-cd info">{t(language, 'carrier.operating', 'Operating')}: {operatingText}</span>
-            <span className="chip-cd yellow">{t(language, 'carrier.safety', 'Safety')}: {safetyText}</span>
-            <span className="chip-cd blue">{t(language, 'carrier.eld', 'ELD')}: {eldText}</span>
+            <span className="chip-cd success">DOT {dotStatusText}{fmcsaLoading ? '…' : ''}</span>
+            <span className="chip-cd info">Operating: {operatingText}</span>
+            <span className="chip-cd yellow">Safety: {safetyText}</span>
+            <span className="chip-cd blue">ELD: {eldText}</span>
           </div>
           <div className="fleet-stats sidebar-fleet">
-            <span className="fleet-item"><i className="fa-solid fa-truck"/> <strong>{powerUnitsVal ?? dash}</strong> {t(language, 'carrier.powerUnits', 'Power Units')}</span>
-            <span className="fleet-item"><i className="fa-solid fa-snowflake"/> <strong>{reefersVal ?? dash}</strong> {t(language, 'carrier.reefers', 'Reefers')}</span>
-            <span className="fleet-item"><i className="fa-solid fa-box"/> <strong>{dryVansVal ?? dash}</strong> {t(language, 'carrier.dryVans', 'Dry Vans')}</span>
+            <span className="fleet-item"><i className="fa-solid fa-truck"/> <strong>{powerUnitsVal ?? dash}</strong> Power Units</span>
+            <span className="fleet-item"><i className="fa-solid fa-snowflake"/> <strong>{reefersVal ?? dash}</strong> Reefers</span>
+            <span className="fleet-item"><i className="fa-solid fa-box"/> <strong>{dryVansVal ?? dash}</strong> Dry Vans</span>
           </div>
         </div>
         <nav className="fp-nav">
@@ -1417,23 +1356,31 @@ export default function CarrierDashboard() {
         </nav>
         {/* Dark mode control - toggles site theme when clicked */}
         <div className="sidebar-dark-control" aria-hidden="false">
-          <span className="dark-label">{t(language, 'dashboard.darkMode', 'Dark Mode')}</span>
+          <span className="dark-label">Dark Mode</span>
           <button
             className="dark-toggle"
             aria-pressed={isDarkMode}
-            aria-label={t(language, 'dashboard.toggleDarkMode', 'Toggle dark mode')}
-            onClick={() => setIsDarkMode((s) => !s)}
+            aria-label="Toggle dark mode"
+            onClick={() => {
+              const nextPref = isDarkMode ? 'light' : 'dark';
+              setThemePreference(nextPref);
+              try {
+                localStorage.setItem('fp_theme_preference', nextPref);
+              } catch {
+                // ignore
+              }
+            }}
           >
             <span className="dark-toggle-knob" />
           </button>
         </div>
         {/* action buttons in the mobile drawer */}
         <div className="sidebar-actions">
-          <button type="button" className="btn small-cd"><i className="fa-solid fa-link"/> {t(language, 'common.connect', 'Connect')}</button>
-          <button type="button" className="btn ghost-cd small" onClick={handleReportFraud}><i className="fa-solid fa-triangle-exclamation"/> {t(language, 'dashboard.reportFraud', 'Report Fraud')}</button>
-          <button type="button" className="btn ghost-cd small subtle" onClick={handleSuggestEdit}><i className="fa-solid fa-pen"/> {t(language, 'dashboard.suggestEdit', 'Suggest Edit')}</button>
+          <button type="button" className="btn small-cd"><i className="fa-solid fa-link"/> Connect</button>
+          <button type="button" className="btn ghost-cd small" onClick={handleReportFraud}><i className="fa-solid fa-triangle-exclamation"/> Report Fraud</button>
+          <button type="button" className="btn ghost-cd small subtle" onClick={handleSuggestEdit}><i className="fa-solid fa-pen"/> Suggest Edit</button>
         </div>
-        <button className="sidebar-close" aria-label={t(language, 'dashboard.closeSidebar', 'Close sidebar')} onClick={() => setIsSidebarOpen(false)}>
+        <button className="sidebar-close" aria-label="Close sidebar" onClick={() => setIsSidebarOpen(false)}>
           <i className="fa-solid fa-xmark" />
         </button>
       </aside>
@@ -1450,30 +1397,30 @@ export default function CarrierDashboard() {
         <div className="modal-overlay" onClick={() => !isSubmitting && setShowReportFraudModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2><i className="fa-solid fa-triangle-exclamation" style={{ marginRight: '8px', color: '#dc2626' }}></i>{t(language, 'dashboard.reportFraud', 'Report Fraud')}</h2>
+              <h2><i className="fa-solid fa-triangle-exclamation" style={{ marginRight: '8px', color: '#dc2626' }}></i>Report Fraud</h2>
               <button type="button" className="modal-close" onClick={() => !isSubmitting && setShowReportFraudModal(false)} disabled={isSubmitting}>
                 <i className="fa-solid fa-xmark" />
               </button>
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label htmlFor="fraud-subject">{t(language, 'common.subjectOptional', 'Subject (Optional)')}</label>
+                <label htmlFor="fraud-subject">Subject (Optional)</label>
                 <input
                   type="text"
                   id="fraud-subject"
                   value={reportFraudData.subject}
                   onChange={(e) => setReportFraudData({ ...reportFraudData, subject: e.target.value })}
-                  placeholder={t(language, 'dashboard.fraudSubjectPlaceholder', 'Brief description of the issue')}
+                  placeholder="Brief description of the issue"
                   disabled={isSubmitting}
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="fraud-message">{t(language, 'common.message', 'Message')} <span style={{ color: '#dc2626' }}>*</span></label>
+                <label htmlFor="fraud-message">Message <span style={{ color: '#dc2626' }}>*</span></label>
                 <textarea
                   id="fraud-message"
                   value={reportFraudData.message}
                   onChange={(e) => setReportFraudData({ ...reportFraudData, message: e.target.value })}
-                  placeholder={t(language, 'dashboard.fraudMessagePlaceholder', 'Please provide details about the fraud or suspicious activity...')}
+                  placeholder="Please provide details about the fraud or suspicious activity..."
                   rows={6}
                   required
                   disabled={isSubmitting}
@@ -1482,10 +1429,10 @@ export default function CarrierDashboard() {
             </div>
             <div className="modal-footer">
               <button type="button" className="btn ghost-cd" onClick={() => setShowReportFraudModal(false)} disabled={isSubmitting}>
-                {t(language, 'common.cancel', 'Cancel')}
+                Cancel
               </button>
               <button type="button" className="btn primary" onClick={handleSubmitReportFraud} disabled={isSubmitting || !reportFraudData.message.trim()}>
-                {isSubmitting ? t(language, 'common.submitting', 'Submitting...') : t(language, 'dashboard.submitReport', 'Submit Report')}
+                {isSubmitting ? 'Submitting...' : 'Submit Report'}
               </button>
             </div>
           </div>
@@ -1497,30 +1444,30 @@ export default function CarrierDashboard() {
         <div className="modal-overlay" onClick={() => !isSubmitting && setShowSuggestEditModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2><i className="fa-solid fa-pen" style={{ marginRight: '8px', color: '#2563eb' }}></i>{t(language, 'dashboard.suggestEdit', 'Suggest Edit')}</h2>
+              <h2><i className="fa-solid fa-pen" style={{ marginRight: '8px', color: '#2563eb' }}></i>Suggest Edit</h2>
               <button type="button" className="modal-close" onClick={() => !isSubmitting && setShowSuggestEditModal(false)} disabled={isSubmitting}>
                 <i className="fa-solid fa-xmark" />
               </button>
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label htmlFor="edit-subject">{t(language, 'common.subjectOptional', 'Subject (Optional)')}</label>
+                <label htmlFor="edit-subject">Subject (Optional)</label>
                 <input
                   type="text"
                   id="edit-subject"
                   value={suggestEditData.subject}
                   onChange={(e) => setSuggestEditData({ ...suggestEditData, subject: e.target.value })}
-                  placeholder={t(language, 'dashboard.editSubjectPlaceholder', 'Brief description of your suggestion')}
+                  placeholder="Brief description of your suggestion"
                   disabled={isSubmitting}
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="edit-message">{t(language, 'common.suggestion', 'Suggestion')} <span style={{ color: '#dc2626' }}>*</span></label>
+                <label htmlFor="edit-message">Suggestion <span style={{ color: '#dc2626' }}>*</span></label>
                 <textarea
                   id="edit-message"
                   value={suggestEditData.message}
                   onChange={(e) => setSuggestEditData({ ...suggestEditData, message: e.target.value })}
-                  placeholder={t(language, 'dashboard.editMessagePlaceholder', 'Please describe your suggestion or edit...')}
+                  placeholder="Please describe your suggestion or edit..."
                   rows={6}
                   required
                   disabled={isSubmitting}
@@ -1529,10 +1476,10 @@ export default function CarrierDashboard() {
             </div>
             <div className="modal-footer">
               <button type="button" className="btn ghost-cd" onClick={() => setShowSuggestEditModal(false)} disabled={isSubmitting}>
-                {t(language, 'common.cancel', 'Cancel')}
+                Cancel
               </button>
               <button type="button" className="btn primary" onClick={handleSubmitSuggestEdit} disabled={isSubmitting || !suggestEditData.message.trim()}>
-                {isSubmitting ? t(language, 'common.submitting', 'Submitting...') : t(language, 'dashboard.submitSuggestion', 'Submit Suggestion')}
+                {isSubmitting ? 'Submitting...' : 'Submit Suggestion'}
               </button>
             </div>
           </div>

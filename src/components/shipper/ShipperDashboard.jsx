@@ -7,6 +7,7 @@ import TrackingVisibility from './TrackingVisibility';
 import DocumentVault from './DocumentVault';
 import Finance from './Finance';
 import Messaging from './Messaging';
+import ShipperProfile from './ShipperProfile';
 import '../../styles/carrier/CarrierDashboard.css';
 import '../../styles/shipper/ShipperDashboard.css';
 import MyCarriers from './MyCarriers';
@@ -15,16 +16,13 @@ import ComplianceOverview from './ComplianceOverview';
 import AiHub from './AiHub';
 import ShipperAnalytics from './Analytics';
 import Settings from './Settings';
+import Calendar from './Calendar';
 import AddLoads from '../carrier/AddLoads';
 import DraftLoadsModal from './DraftLoadsModal';
 import InviteCarrierModal from './InviteCarrierModal';
 import CarrierBids from './CarrierBids';
 import ShipperMyLoads from './MyLoads';
 import Bills from './Bills';
-import AlertsNotifications from '../carrier/AlertsNotifications';
-import ShipperProfile from './ShipperProfile';
-import { useUserSettings } from '../../contexts/UserSettingsContext';
-import { t } from '../../i18n/translate';
 import '../../styles/shipper/InviteCarrierModal.css';
 // OnboardingCoach removed - compliance data now shown in Compliance & Safety page
 import logo from '/src/assets/logo.png';
@@ -32,10 +30,10 @@ import resp_logo from '/src/assets/logo_1.png';
 
 export default function ShipperDashboard() {
   const { currentUser, logout } = useAuth();
-  const { settings } = useUserSettings();
-  const language = settings?.language || 'English';
   const navigate = useNavigate();
   const location = useLocation();
+
+  const FALLBACK_AVATAR_URL = 'https://randomuser.me/api/portraits/men/32.jpg';
   const [activeNav, setActiveNav] = useState('home');
   const [trackingInitialLoadId, setTrackingInitialLoadId] = useState(null);
   const [initialThreadId, setInitialThreadId] = useState(null);
@@ -182,19 +180,11 @@ export default function ShipperDashboard() {
   // Dashboard stats state
   const [dashboardStats, setDashboardStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(true);
-  const [shipperInsights, setShipperInsights] = useState(null);
-  const [shipperInsightsLoading, setShipperInsightsLoading] = useState(false);
-  const [shipperInsightsError, setShipperInsightsError] = useState('');
-  const shipperInsightsAbortRef = React.useRef(null);
 
   // Home "Active Loads" list data (kept lightweight; Tracking page fetches full view)
   const [homeLoadsLoading, setHomeLoadsLoading] = useState(false);
   const [homeLoadsError, setHomeLoadsError] = useState('');
   const [homeLoads, setHomeLoads] = useState([]);
-  const [homeCarriersLoading, setHomeCarriersLoading] = useState(false);
-  const [homeCarriers, setHomeCarriers] = useState([]);
-  const [homeComplianceLoading, setHomeComplianceLoading] = useState(false);
-  const [homeCompliance, setHomeCompliance] = useState(null);
 
   // AddLoads modal state
   const [showAddLoads, setShowAddLoads] = useState(false);
@@ -309,56 +299,6 @@ export default function ShipperDashboard() {
     }
   };
 
-  const fetchHomeCarriers = async () => {
-    if (!currentUser) return;
-    setHomeCarriersLoading(true);
-    try {
-      const token = await currentUser.getIdToken();
-      const res = await fetch(`${API_URL}/carriers/my-carriers`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      if (!res.ok) {
-        setHomeCarriers([]);
-        return;
-      }
-      const data = await res.json();
-      setHomeCarriers(Array.isArray(data?.carriers) ? data.carriers : []);
-    } catch (error) {
-      console.error('Error fetching carriers for dashboard:', error);
-      setHomeCarriers([]);
-    } finally {
-      setHomeCarriersLoading(false);
-    }
-  };
-
-  const fetchHomeCompliance = async () => {
-    if (!currentUser) return;
-    setHomeComplianceLoading(true);
-    try {
-      const token = await currentUser.getIdToken();
-      const res = await fetch(`${API_URL}/compliance/status`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      if (!res.ok) {
-        setHomeCompliance(null);
-        return;
-      }
-      const data = await res.json();
-      setHomeCompliance(data || null);
-    } catch (error) {
-      console.error('Error fetching compliance summary for dashboard:', error);
-      setHomeCompliance(null);
-    } finally {
-      setHomeComplianceLoading(false);
-    }
-  };
-
   // Handle editing draft loads
   const handleEditDraft = (draftLoad) => {
     setEditingDraftLoad(draftLoad);
@@ -370,92 +310,13 @@ export default function ShipperDashboard() {
     fetchStats();
   }, [currentUser]);
 
-  useEffect(() => {
-    let alive = true;
-    if (!currentUser || activeNav !== 'home') {
-      if (shipperInsightsAbortRef.current) {
-        shipperInsightsAbortRef.current.abort();
-        shipperInsightsAbortRef.current = null;
-      }
-      return;
-    }
-
-    const fetchShipperInsights = async () => {
-      if (shipperInsightsAbortRef.current) {
-        shipperInsightsAbortRef.current.abort();
-      }
-      const controller = new AbortController();
-      shipperInsightsAbortRef.current = controller;
-      setShipperInsightsLoading(true);
-      setShipperInsightsError('');
-      try {
-        const token = await currentUser.getIdToken();
-        const res = await fetch(`${API_URL}/shipper/dashboard/insights`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          if (!alive) return;
-          setShipperInsightsError(String(body?.detail || 'Failed to load shipper insights'));
-          return;
-        }
-        const data = await res.json();
-        if (!alive) return;
-        setShipperInsights(data || null);
-      } catch (e) {
-        if (e?.name === 'AbortError' || String(e?.message || '').toLowerCase().includes('request cancelled')) {
-          return;
-        }
-        if (!alive) return;
-        setShipperInsightsError(String(e?.message || 'Failed to load shipper insights'));
-      } finally {
-        if (shipperInsightsAbortRef.current === controller) {
-          shipperInsightsAbortRef.current = null;
-        }
-        if (alive) setShipperInsightsLoading(false);
-      }
-    };
-
-    fetchShipperInsights();
-    const onFocus = () => fetchShipperInsights();
-    const onVisibility = () => {
-      if (!document.hidden) fetchShipperInsights();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibility);
-    const id = setInterval(() => {
-      if (!document.hidden && activeNav === 'home') fetchShipperInsights();
-    }, 60000);
-
-    return () => {
-      alive = false;
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibility);
-      clearInterval(id);
-      if (shipperInsightsAbortRef.current) {
-        shipperInsightsAbortRef.current.abort();
-        shipperInsightsAbortRef.current = null;
-      }
-    };
-  }, [activeNav, currentUser]);
-
   // Fetch a small set of loads used by the Home placeholders.
   useEffect(() => {
     fetchHomeLoads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  useEffect(() => {
-    fetchHomeCarriers();
-    fetchHomeCompliance();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
-
-  // Fetch onboarding data on mount
+  // Fetch profile data on mount (canonical source: /auth/me)
   useEffect(() => {
     const fetchProfile = async () => {
       if (!currentUser) {
@@ -464,7 +325,7 @@ export default function ShipperDashboard() {
       }
       try {
         const token = await currentUser.getIdToken();
-        const response = await fetch(`${API_URL}/onboarding/data`, {
+        const response = await fetch(`${API_URL}/auth/me`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -482,6 +343,29 @@ export default function ShipperDashboard() {
     };
     fetchProfile();
   }, [currentUser]);
+
+  const refreshShipperProfile = async (patch = null) => {
+    if (!currentUser) return;
+    if (patch && typeof patch === 'object') {
+      setShipperProfile((prev) => ({ ...(prev || {}), ...patch }));
+    }
+
+    try {
+      const token = await currentUser.getIdToken();
+      const response = await fetch(`${API_URL}/auth/me`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setShipperProfile(data);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   // Poll messaging unread summary (used for sidebar badge)
   useEffect(() => {
@@ -513,35 +397,36 @@ export default function ShipperDashboard() {
 
   const navGroups = [
     {
-      title: t(language, 'nav.operate', 'OPERATE'),
+      title: 'OPERATE',
       items: [
-        { key: 'home', label: t(language, 'nav.dashboard', 'Dashboard'), icon: 'fa-solid fa-house' },
-        { key: 'my-loads', label: t(language, 'nav.myLoads', 'My Loads'), icon: 'fa-solid fa-truck' },
-        { key: 'my-carriers', label: t(language, 'nav.myCarriers', 'My Carriers'), icon: 'fa-solid fa-people-group' },
-        { key: 'marketplace', label: t(language, 'nav.marketplace', 'Marketplace'), icon: 'fa-solid fa-store' },
-        { key: 'messaging', label: t(language, 'nav.messaging', 'Messaging'), icon: 'fa-solid fa-comments' },
-        { key: 'alerts', label: t(language, 'nav.alerts', 'Alerts & Notifications'), icon: 'fa-solid fa-bell' },
-        { key: 'carrier-bids', label: t(language, 'nav.carrierBids', 'Carrier Bids'), icon: 'fa-solid fa-hand-holding-dollar' },
-        { key: 'tracking', label: t(language, 'nav.trackingVisibility', 'Tracking & Visibility'), icon: 'fa-solid fa-location-crosshairs' },
-        { key: 'doc-vault', label: t(language, 'nav.docs', 'Document Vault'), icon: 'fa-solid fa-folder' },
+        { key: 'home', label: 'Dashboard', icon: 'fa-solid fa-house' },
+        { key: 'my-loads', label: 'My Loads', icon: 'fa-solid fa-truck' },
+        { key: 'my-carriers', label: 'My Carriers', icon: 'fa-solid fa-people-group' },
+        { key: 'calendar', label: 'Calendar', icon: 'fa-regular fa-calendar-days' },
+        { key: 'marketplace', label: 'Marketplace', icon: 'fa-solid fa-store' },
+        { key: 'messaging', label: 'Messaging', icon: 'fa-solid fa-comments' },
+        { key: 'alerts', label: 'Alerts & Notifications', icon: 'fa-solid fa-bell' },
+        { key: 'carrier-bids', label: 'Carrier Bids', icon: 'fa-solid fa-hand-holding-dollar' },
+        { key: 'tracking', label: 'Tracking & Visibility', icon: 'fa-solid fa-location-crosshairs' },
+        { key: 'doc-vault', label: 'Document Vault', icon: 'fa-solid fa-folder' },
       ]
     },
     {
-      title: t(language, 'nav.manage', 'MANAGE'),
+      title: 'MANAGE',
       items: [
-        { key: 'finance', label: t(language, 'nav.finance', 'Finance'), icon: 'fa-solid fa-wallet' },
-        { key: 'bills', label: t(language, 'nav.financeBilling', 'Invoices / Bills'), icon: 'fa-solid fa-file-invoice-dollar' },
-        { key: 'compliance', label: t(language, 'nav.compliance', 'Compliance'), icon: 'fa-solid fa-shield-halved' },
-        { key: 'analytics', label: t(language, 'nav.analytics', 'Analytics'), icon: 'fa-solid fa-chart-column' }
+        { key: 'finance', label: 'Finance', icon: 'fa-solid fa-wallet' },
+        { key: 'bills', label: 'Invoices / Bills', icon: 'fa-solid fa-file-invoice-dollar' },
+        { key: 'compliance', label: 'Compliance', icon: 'fa-solid fa-shield-halved' },
+        { key: 'analytics', label: 'Analytics', icon: 'fa-solid fa-chart-column' }
       ]
     },
     {
-      title: t(language, 'nav.system', 'SYSTEM'),
+      title: 'SYSTEM',
       items: [
-        { key: 'profile', label: t(language, 'nav.profile', 'Profile'), icon: 'fa-solid fa-user' },
-        { key: 'settings', label: t(language, 'nav.settings', 'Settings'), icon: 'fa-solid fa-gear' },
-        { key: 'help', label: t(language, 'nav.aiHub', 'AI Hub'), icon: 'fa-regular fa-circle-question' },
-        { key: 'logout', label: t(language, 'nav.logout', 'Logout'), icon: 'fa-solid fa-right-from-bracket' }
+        { key: 'profile', label: 'Profile', icon: 'fa-solid fa-user' },
+        { key: 'settings', label: 'Settings', icon: 'fa-solid fa-gear' },
+        { key: 'help', label: 'AI Hub', icon: 'fa-regular fa-circle-question' },
+        { key: 'logout', label: 'Logout', icon: 'fa-solid fa-right-from-bracket' }
       ]
     }
   ];
@@ -564,12 +449,6 @@ export default function ShipperDashboard() {
       setActiveNav(key);
       if (isSidebarOpen) setIsSidebarOpen(false);
     }
-  };
-
-  const runShipperInsightAction = (actionTarget) => {
-    const target = String(actionTarget || '').trim();
-    if (!target) return;
-    handleNavClick(target);
   };
 
   // --- FILTER DROPDOWNS STATE ---
@@ -595,27 +474,13 @@ export default function ShipperDashboard() {
   function HomeView() {
     const normalizeStatus = (s) => String(s || '').trim().toLowerCase();
     const activeStatuses = new Set(['posted', 'tendered', 'covered', 'accepted', 'awarded', 'dispatched', 'in_transit']);
-    const assignedStatuses = new Set(['covered', 'accepted', 'awarded', 'dispatched', 'in_transit', 'delivered', 'completed']);
     const deliveredStatuses = new Set(['delivered', 'completed']);
 
     const activeLoads = (homeLoads || []).filter((l) => activeStatuses.has(normalizeStatus(l?.status || l?.load_status)));
     const deliveredLoads = (homeLoads || []).filter((l) => deliveredStatuses.has(normalizeStatus(l?.status || l?.load_status)));
-    const assignedLoads = (homeLoads || []).filter((l) => assignedStatuses.has(normalizeStatus(l?.status || l?.load_status)));
 
     const totalCount = Number(dashboardStats?.total_loads || 0) || (homeLoads || []).length;
     const activeCount = Number(dashboardStats?.active_loads || 0) || activeLoads.length;
-    const shipperAiHeadline = String(
-      shipperInsights?.ai_insights?.headline ||
-        'Load activity and market changes are reflected here.'
-    );
-    const shipperAiBullets = (Array.isArray(shipperInsights?.ai_insights?.bullets) ? shipperInsights.ai_insights.bullets : [])
-      .map((x) => String(x || '').trim())
-      .filter(Boolean);
-    const shipperAiSuggestions = (Array.isArray(shipperInsights?.ai_suggestions) ? shipperInsights.ai_suggestions : [])
-      .map((s, idx) => ({
-        id: String(s?.id || `shipper_ai_${idx}`),
-        action_target: String(s?.action_target || ''),
-      }));
 
     const shortLoadLabel = (l) => {
       const num = String(l?.load_number || '').trim();
@@ -645,86 +510,13 @@ export default function ShipperDashboard() {
       return 'ETA: TBD';
     };
 
-    const carrierMetricsMap = new Map();
-    (homeCarriers || []).forEach((carrier) => {
-      const carrierId = String(carrier?.carrier_id || carrier?.id || '').trim();
-      const carrierName = String(carrier?.carrier_name || carrier?.name || carrier?.company_name || '').trim();
-      const key = carrierId || carrierName;
-      if (!key) return;
-      carrierMetricsMap.set(key, {
-        key,
-        id: carrierId,
-        name: carrierName || 'Carrier',
-        rating: Number(carrier?.rating || 0),
-        totalLoads: Number(carrier?.total_loads || 0),
-        activeRelationship: String(carrier?.status || '').trim().toLowerCase() === 'active',
-        assignedLoads: 0,
-        activeLoads: 0,
-        completedLoads: 0,
-      });
-    });
-
-    (homeLoads || []).forEach((load) => {
-      const status = normalizeStatus(load?.status || load?.load_status);
-      const carrierId = String(load?.assigned_carrier || load?.assigned_carrier_id || load?.carrier_id || '').trim();
-      const carrierName = String(load?.assigned_carrier_name || load?.carrier_name || '').trim();
-      const key = carrierId || carrierName;
-      if (!key) return;
-      const current = carrierMetricsMap.get(key) || {
-        key,
-        id: carrierId,
-        name: carrierName || 'Carrier',
-        rating: 0,
-        totalLoads: 0,
-        activeRelationship: false,
-        assignedLoads: 0,
-        activeLoads: 0,
-        completedLoads: 0,
-      };
-
-      current.id = current.id || carrierId;
-      current.name = current.name || carrierName || 'Carrier';
-      current.assignedLoads += 1;
-      if (activeStatuses.has(status)) current.activeLoads += 1;
-      if (deliveredStatuses.has(status)) current.completedLoads += 1;
-
-      carrierMetricsMap.set(key, current);
-    });
-
-    const topCarrierRows = Array.from(carrierMetricsMap.values())
-      .filter((carrier) => carrier.name)
-      .sort((left, right) => {
-        if (right.completedLoads !== left.completedLoads) return right.completedLoads - left.completedLoads;
-        if (right.activeLoads !== left.activeLoads) return right.activeLoads - left.activeLoads;
-        if (right.assignedLoads !== left.assignedLoads) return right.assignedLoads - left.assignedLoads;
-        if (right.totalLoads !== left.totalLoads) return right.totalLoads - left.totalLoads;
-        return right.rating - left.rating;
-      })
-      .slice(0, 3);
-
-    const coverageRate = totalCount > 0 ? Math.round((assignedLoads.length / totalCount) * 100) : 0;
-    const completionRate = totalCount > 0 ? Math.round((deliveredLoads.length / totalCount) * 100) : 0;
-    const activeCarrierCount = (homeCarriers || []).filter((carrier) => String(carrier?.status || '').trim().toLowerCase() === 'active').length;
-    const averageCarrierRating = (homeCarriers || []).length > 0
-      ? ((homeCarriers || []).reduce((sum, carrier) => sum + Number(carrier?.rating || 0), 0) / (homeCarriers || []).length).toFixed(1)
-      : '0.0';
-
-    const complianceDocuments = Array.isArray(homeCompliance?.documents) ? homeCompliance.documents : [];
-    const expiringComplianceItems = complianceDocuments
-      .filter((doc) => ['Expired', 'Expiring Soon'].includes(String(doc?.status || '').trim()))
-      .slice(0, 2);
-    const complianceWarnings = Array.isArray(homeCompliance?.warnings) ? homeCompliance.warnings.filter(Boolean) : [];
-    const complianceRecommendations = Array.isArray(homeCompliance?.recommendations) ? homeCompliance.recommendations.filter(Boolean) : [];
-    const complianceScore = Number(homeCompliance?.compliance_score || 0);
-    const complianceTone = complianceScore >= 80 ? 'Fully compliant' : complianceScore >= 50 ? 'Needs attention' : 'At risk';
-
     return (
       <>
         <header className="fp-header">
           <div className="fp-header-controls">
-            <button className="btn small-cd" onClick={() => setShowAddLoads(true)}>+ {t(language, 'shipper.createLoad', 'Create Load')}</button>
-            <button className="btn small ghost-cd" onClick={() => setIsInviteCarrierOpen(true)}>{t(language, 'shipper.inviteCarrier', 'Invite Carrier')}</button>
-            <button className="btn small ghost-cd" onClick={() => fileInputRef.current?.click()}>{t(language, 'dashboard.uploadDocument', 'Upload Document')}</button>
+            <button className="btn small-cd" onClick={() => setShowAddLoads(true)}>+ Create Load</button>
+            <button className="btn small ghost-cd" onClick={() => setIsInviteCarrierOpen(true)}>Invite Carrier</button>
+            <button className="btn small ghost-cd" onClick={() => fileInputRef.current?.click()}>Upload Document</button>
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -749,36 +541,30 @@ export default function ShipperDashboard() {
         </header>
 
         {/* Shipper Profile Card - Shows onboarding data */}
-        {!profileLoading && shipperProfile && shipperProfile.data && (
+        {!profileLoading && shipperProfile && (
           <section style={{ marginBottom: '20px' }}>
             <div className="card" style={{ padding: '20px', background: '#f8fafc' }}>
               <div className="card-header">
-                <h3><i className="fa-solid fa-building" style={{ marginRight: '8px' }}></i>{t(language, 'shipper.businessProfile', 'Business Profile')}</h3>
+                <h3><i className="fa-solid fa-building" style={{ marginRight: '8px' }}></i>Business Profile</h3>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                {shipperProfile.data.businessName && (
-                  <div><strong>{t(language, 'shipper.businessLabel', 'Business:')}</strong> {shipperProfile.data.businessName}</div>
+                {shipperProfile.company_name && (
+                  <div><strong>Business:</strong> {shipperProfile.company_name}</div>
                 )}
-                {shipperProfile.data.businessType && (
-                  <div><strong>{t(language, 'shipper.typeLabel', 'Type:')}</strong> {shipperProfile.data.businessType}</div>
+                {shipperProfile.business_type && (
+                  <div><strong>Type:</strong> {shipperProfile.business_type}</div>
                 )}
-                {shipperProfile.data.contactFullName && (
-                  <div><strong>{t(language, 'shipper.contactLabel', 'Contact:')}</strong> {shipperProfile.data.contactFullName}</div>
+                {shipperProfile.name && (
+                  <div><strong>Contact:</strong> {shipperProfile.name}</div>
                 )}
-                {shipperProfile.data.contactEmail && (
-                  <div><strong>{t(language, 'shipper.emailLabel', 'Email:')}</strong> {shipperProfile.data.contactEmail}</div>
-                )}
-                {shipperProfile.data.freightType && (
-                  <div><strong>{t(language, 'shipper.freightTypeLabel', 'Freight Type:')}</strong> {shipperProfile.data.freightType}</div>
-                )}
-                {shipperProfile.data.regionsOfOperation && (
-                  <div><strong>{t(language, 'shipper.regionsLabel', 'Regions:')}</strong> {shipperProfile.data.regionsOfOperation}</div>
+                {shipperProfile.email && (
+                  <div><strong>Email:</strong> {shipperProfile.email}</div>
                 )}
               </div>
               {!shipperProfile.onboarding_completed && (
                 <div style={{ marginTop: '16px', padding: '12px', background: '#fef3c7', borderRadius: '8px', color: '#92400e' }}>
                   <i className="fa-solid fa-exclamation-triangle" style={{ marginRight: '8px' }}></i>
-                  {t(language, 'shipper.onboardingNotComplete', 'Onboarding not complete.')} <button onClick={() => setActiveNav('profile')} style={{ background: 'none', border: 'none', color: '#1d4ed8', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}>{t(language, 'shipper.completeProfile', 'Complete your profile')}</button>
+                  Onboarding not complete. <button onClick={() => setActiveNav('profile')} style={{ background: 'none', border: 'none', color: '#1d4ed8', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}>Complete your profile</button>
                 </div>
               )}
             </div>
@@ -790,15 +576,15 @@ export default function ShipperDashboard() {
         <section className="top-stats">
           <div className="card sd-small-card">
             <div className="sd-small-card-row">
-              <h4>{t(language, 'dashboard.activeLoads', 'Active Loads')}</h4>
+              <h4>Active Loads</h4>
               <i className="fa-solid fa-truck" aria-hidden="true" />
             </div>
             <div className="big">{statsLoading ? '...' : (dashboardStats?.active_loads || 0)}</div>
-            <div className="small-sub-active">+{dashboardStats?.active_loads_today || 0} {t(language, 'common.today', 'today')}</div>
+            <div className="small-sub-active">+{dashboardStats?.active_loads_today || 0} today</div>
           </div>
           <div className="card sd-small-card">
             <div className="sd-small-card-row">
-              <h4>{t(language, 'shipper.onTimePercent', 'On-Time %')}</h4>
+              <h4>On-Time %</h4>
               <i className="fa-solid fa-clock" aria-hidden="true" />
             </div>
             <div className="big green">{statsLoading ? '...' : `${dashboardStats?.on_time_percentage || 0}%`}</div>
@@ -806,7 +592,7 @@ export default function ShipperDashboard() {
           </div>
           <div className="card sd-small-card">
             <div className="sd-small-card-row">
-              <h4>{t(language, 'shipper.carrierRating', 'Carrier Rating')}</h4>
+              <h4>Carrier Rating</h4>
               <i className="fa-solid fa-star" aria-hidden="true" />
             </div>
             <div className="big">{statsLoading ? '...' : (dashboardStats?.rating || 0)}</div>
@@ -815,32 +601,32 @@ export default function ShipperDashboard() {
 
           <div className="card sd-small-card">
             <div className="sd-small-card-row">
-              <h4>{t(language, 'shipper.totalRevenue', 'Total Revenue')}</h4>
+              <h4>Total Revenue</h4>
               <i className="fa-solid fa-dollar-sign" aria-hidden="true" />
             </div>
             <div className="big">${statsLoading ? '...' : ((dashboardStats?.total_revenue || 0) / 1000).toFixed(0)}K</div>
-            <div className="small-sub-revenue">{dashboardStats?.revenue_change || '+0%'} {t(language, 'shipper.mtd', 'MTD')}</div>
+            <div className="small-sub-revenue">{dashboardStats?.revenue_change || '+0%'} MTD</div>
           </div>
           <div className="card sd-small-card">
             <div className="sd-small-card-row">
-              <h4>{t(language, 'nav.compliance', 'Compliance')}</h4>
+              <h4>Compliance</h4>
               <i className="fa-solid fa-shield-halved" aria-hidden="true" />
             </div>
             <div className="big">{statsLoading ? '...' : `${dashboardStats?.compliance_score || 0}%`}</div>
-            <div className="small-sub-compliance">{dashboardStats?.compliance_expiring || 0} {t(language, 'common.expiring', 'expiring')}</div>
+            <div className="small-sub-compliance">{dashboardStats?.compliance_expiring || 0} expiring</div>
           </div>
           <div className="card sd-small-card" style={{ cursor: 'pointer' }} onClick={() => setShowDraftLoadsModal(true)}>
             <div className="sd-small-card-row">
-              <h4>{t(language, 'shipper.draftLoads', 'Draft Loads')}</h4>
+              <h4>Draft Loads</h4>
               <i className="fa-solid fa-file-lines" aria-hidden="true" />
             </div>
             <div className="big">{statsLoading ? '...' : (dashboardStats?.draft_loads || 0)}</div>
-            <div className="small-sub-task">{t(language, 'common.clickToManage', 'Click to manage')}</div>
+            <div className="small-sub-task">Click to manage</div>
           </div>
 
           <div className="card sd-small-card shd-ai-summary">
-            <h4>{t(language, 'shipper.aiSummary', 'AI Summary')}</h4>
-            <div className="big">{statsLoading ? '...' : (dashboardStats?.total_loads || 0)} {t(language, 'common.loads', 'loads')}</div>
+            <h4>AI Summary</h4>
+            <div className="big">{statsLoading ? '...' : (dashboardStats?.total_loads || 0)} loads</div>
           </div>
         </section>
 
@@ -875,33 +661,17 @@ export default function ShipperDashboard() {
 
         <section className="fp-grid" style={{gridTemplateColumns:'repeat(3,1fr)',gap:18}}>
           <div className="card ai-insights">
-            <h3>{t(language, 'shipper.aiInsights', 'AI Insights')}</h3>
-            <div className="insight">{shipperAiHeadline}</div>
-            {shipperInsightsLoading && (
-              <div className="muted" style={{ marginTop: 8 }}>{t(language, 'dashboard.loadingInsights', 'Loading insights...')}</div>
-            )}
-            {shipperInsightsError && (
-              <div className="muted" style={{ marginTop: 8, color: '#b42318' }}>{shipperInsightsError}</div>
-            )}
+            <h3>AI Insights</h3>
+            <div className="insight">Top Lane Alert<br/>MN → IL averaging $2.95/mi (+8%)</div>
             <ul className="muted">
-              {(shipperAiBullets.length > 0 ? shipperAiBullets : [
-                'Demand and coverage signals are generated from your current load activity.',
-                'Open marketplace and carrier bids for real-time opportunities.',
-              ]).slice(0, 3).map((line, idx) => (
-                <li
-                  key={`shipper-ai-bullet-${idx}`}
-                  style={{ cursor: shipperAiSuggestions[idx]?.action_target ? 'pointer' : 'default' }}
-                  onClick={() => runShipperInsightAction(shipperAiSuggestions[idx]?.action_target)}
-                >
-                  {line}
-                </li>
-              ))}
+              <li>Demand spike in Midwest corridors</li>
+              <li>Fuel costs stabilizing</li>
             </ul>
           </div>
 
           <div className="card active-loads">
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <h3>{t(language, 'dashboard.activeLoads', 'Active Loads')}</h3>
+              <h3>Active Loads</h3>
               <div className="muted">{activeCount} of {totalCount}</div>
             </div>
             <ul className="active-load-list">
@@ -911,11 +681,11 @@ export default function ShipperDashboard() {
                 </li>
               ) : homeLoadsLoading ? (
                 <li>
-                  <div className="muted">{t(language, 'shipper.loadingShipments', 'Loading shipments…')}</div>
+                  <div className="muted">Loading shipments…</div>
                 </li>
               ) : (activeLoads || []).length === 0 ? (
                 <li>
-                  <div className="muted">{t(language, 'shipper.noActiveLoadsYet', 'No active loads yet.')}</div>
+                  <div className="muted">No active loads yet.</div>
                 </li>
               ) : (
                 (activeLoads || []).slice(0, 3).map((l) => {
@@ -942,85 +712,65 @@ export default function ShipperDashboard() {
           </div>
 
           <div className="card top-carriers">
-            <h3>{t(language, 'shipper.topCarriers', 'Top Carriers')}</h3>
+            <h3>Top Carriers</h3>
             <ol className="top-carriers">
-              {homeCarriersLoading ? (
-                <li>
-                  <div className="muted small">{t(language, 'shipper.loadingCarriers', 'Loading carriers...')}</div>
-                </li>
-              ) : topCarrierRows.length === 0 ? (
-                <li>
-                  <div className="muted small">{t(language, 'shipper.noCarrierActivity', 'No carrier activity yet.')}</div>
-                </li>
-              ) : topCarrierRows.map((carrier, index) => (
-                <li key={carrier.key || `${carrier.name}-${index}`}>
-                  <div className="carrier-left">
-                    <div className="name">{carrier.name}</div>
-                    <div className="sub muted small">
-                      {carrier.completedLoads > 0 || carrier.activeLoads > 0
-                        ? `${carrier.completedLoads} ${t(language, 'common.completed', 'completed')} • ${carrier.activeLoads} ${t(language, 'common.active', 'active')}`
-                        : `${carrier.activeRelationship ? t(language, 'shipper.activeRelationship', 'Active relationship') : t(language, 'common.connected', 'Connected')} • ${carrier.assignedLoads || carrier.totalLoads || 0} ${t(language, 'common.loads', 'loads')}`}
-                    </div>
-                  </div>
-                  <div className="carrier-right">
-                    <span className={`rating ${index === 1 ? 'blue' : index === 2 ? 'orange' : ''}`}>
-                      {carrier.rating > 0 ? `${carrier.rating.toFixed(1)}★` : t(language, 'shipper.noRating', 'No rating')}
-                    </span>
-                    <div className="muted small">{carrier.assignedLoads || carrier.totalLoads || 0} {t(language, 'common.loads', 'loads')}</div>
-                  </div>
-                </li>
-              ))}
+              <li>
+                <div className="carrier-left">
+                  <div className="name">Swift Transport</div>
+                  <div className="sub muted small">98.5% On-Time</div>
+                </div>
+                <div className="carrier-right">
+                  <span className="rating">4.9★</span>
+                  <div className="muted small">42 loads</div>
+                </div>
+              </li>
+              <li>
+                <div className="carrier-left">
+                  <div className="name">Reliable Freight</div>
+                  <div className="sub muted small">96.8% On-Time</div>
+                </div>
+                <div className="carrier-right">
+                  <span className="rating blue">4.8★</span>
+                  <div className="muted small">38 loads</div>
+                </div>
+              </li>
+              <li>
+                <div className="carrier-left">
+                  <div className="name">Express Logistics</div>
+                  <div className="sub muted small">95.2% On-Time</div>
+                </div>
+                <div className="carrier-right">
+                  <span className="rating orange">4.7★</span>
+                  <div className="muted small">29 loads</div>
+                </div>
+              </li>
             </ol>
           </div>
 
           <div className="card performance-card">
-            <h3>{t(language, 'shipper.performanceHealth', 'Performance Health')}</h3>
+            <h3>Performance Health</h3>
             <div className="performance-metrics">
               <div className="metric">
-                <strong className="green">{t(language, 'shipper.coverage', 'Coverage')}</strong>
-                <div className="muted">{coverageRate}%</div>
+                <strong className="green">Financial</strong>
+                <div className="muted">92%</div>
               </div>
               <div className="metric">
-                <strong className="blue">{t(language, 'shipper.completion', 'Completion')}</strong>
-                <div className="muted">{completionRate}%</div>
+                <strong className="blue">Operational</strong>
+                <div className="muted">96%</div>
               </div>
-            </div>
-            <div className="muted small" style={{ marginTop: 12 }}>
-              {totalCount} {t(language, 'shipper.totalLoads', 'total loads')} • {activeCarrierCount} {t(language, 'shipper.activeCarriersLabel', 'active carriers')} • {t(language, 'shipper.avgRating', 'Avg rating')} {averageCarrierRating}★
             </div>
           </div>
 
           <div className="card compliance-card">
-            <h3>{t(language, 'shipper.complianceStatus', 'Compliance Status')}</h3>
-            {homeComplianceLoading ? (
-              <div className="sd-exp-item pill">
-                <div className="exp-title">{t(language, 'shipper.loadingCompliance', 'Loading compliance...')}</div>
-              </div>
-            ) : (
-              <>
-                <div className="sd-exp-item pill">
-                  <div className="exp-title">{t(language, 'shipper.complianceScore', 'Compliance score:')} {complianceScore}%</div>
-                  <div className="exp-sub muted">{complianceTone} • {complianceDocuments.length} {t(language, 'shipper.documentsOnFile', 'documents on file')}</div>
-                </div>
-                {expiringComplianceItems.length > 0 ? expiringComplianceItems.map((doc, index) => (
-                  <div className="sd-exp-item pill" key={`compliance-doc-${doc?.id || index}`}>
-                    <div className="exp-title">{String(doc?.document_type || 'Document')} {String(doc?.status || '').trim()}</div>
-                    <div className="exp-sub muted">{doc?.expiry_date ? `${t(language, 'common.expiry', 'Expiry:')} ${doc.expiry_date}` : t(language, 'shipper.reviewRequired', 'Review required')}</div>
-                  </div>
-                )) : complianceWarnings.slice(0, 1).map((warning, index) => (
-                  <div className="sd-exp-item pill" key={`compliance-warning-${index}`}>
-                    <div className="exp-title">{t(language, 'shipper.complianceAlert', 'Compliance alert')}</div>
-                    <div className="exp-sub muted">{warning}</div>
-                  </div>
-                ))}
-                {expiringComplianceItems.length === 0 && complianceWarnings.length === 0 && complianceRecommendations.slice(0, 1).map((recommendation, index) => (
-                  <div className="sd-exp-item pill" key={`compliance-recommendation-${index}`}>
-                    <div className="exp-title">{t(language, 'shipper.nextAction', 'Next action')}</div>
-                    <div className="exp-sub muted">{recommendation}</div>
-                  </div>
-                ))}
-              </>
-            )}
+            <h3>Compliance Status</h3>
+            <div className="sd-exp-item pill">
+              <div className="exp-title">Insurance Expiring</div>
+              <div className="exp-sub muted">Swift Transport - 3 days</div>
+            </div>
+            <div className="sd-exp-item pill">
+              <div className="exp-title">DOT Audit Due</div>
+              <div className="exp-sub muted">Reliable Freight - 7 days</div>
+            </div>
           </div>
         </section>
       </>
@@ -1031,9 +781,79 @@ export default function ShipperDashboard() {
     if (activeNav === 'home') return <HomeView />;
     if (activeNav === 'my-loads') return <ShipperMyLoads />;
     if (activeNav === 'my-carriers') return <MyCarriers />;
+    if (activeNav === 'calendar') return <Calendar />;
     if (activeNav === 'marketplace') return <ShipperMarketplace />;
     if (activeNav === 'carrier-bids') return <CarrierBids />;
-    if (activeNav === 'alerts') return <AlertsNotifications />;
+    if (activeNav === 'alerts') return (
+      <div>
+        <header className="fp-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div className="fp-header-titles" style={{ minWidth: 240, flex: '1 1 360px' }}>
+            <h2>Alerts &amp; Notifications</h2>
+            <p className="fp-subtitle">Updates, reminders, and important alerts.</p>
+          </div>
+          <div className="fp-header-controls" style={{ display: 'flex', justifyContent: 'flex-end', flex: '0 0 auto' }}>
+            <button
+              type="button"
+              className="btn small ghost-cd"
+              onClick={() => fetchNotifications()}
+              disabled={Boolean(notifLoading)}
+            >
+              {notifLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+        </header>
+        <section className="fp-grid" style={{ gridTemplateColumns: '1fr' }}>
+          <div className="card" style={{ gridColumn: '1 / -1' }}>
+            <div className="card-header"><h3>Notifications</h3></div>
+            <div style={{ maxHeight: 560, overflowY: 'auto', padding: 14 }}>
+              {Boolean(notifLoading) ? (
+                <div className="muted">Loading…</div>
+              ) : (notifItems || []).length === 0 ? (
+                <div className="muted">No notifications yet.</div>
+              ) : (
+                <div className="expiring-list">
+                  {(notifItems || []).map((n) => {
+                    const isRead = Boolean(n?.is_read);
+                    const title = String(n?.title || 'Notification');
+                    const msg = String(n?.message || '');
+                    const when = String(n?.relative_time || n?.formatted_time || n?.created_at_human || n?.created_at || '').trim();
+                    return (
+                      <div
+                        key={String(n?.id || Math.random())}
+                        className="sd-exp-item pill"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleNotifAction(n)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleNotifAction(n)}
+                        style={{ cursor: 'pointer', opacity: isRead ? 0.75 : 1 }}
+                      >
+                        <div className="exp-title" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                          <span>{title}</span>
+                          {!isRead ? (
+                            <button
+                              type="button"
+                              className="btn small ghost-cd"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markNotificationRead(String(n?.id || '').trim());
+                              }}
+                            >
+                              Mark read
+                            </button>
+                          ) : null}
+                        </div>
+                        {msg ? <div className="exp-sub">{msg}</div> : null}
+                        {when ? <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>{when}</div> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+    );
     if (activeNav === 'tracking') return <TrackingVisibility initialLoadId={trackingInitialLoadId} />;
     if (activeNav === 'doc-vault') return <DocumentVault />;
     if (activeNav === 'finance') return <Finance />;
@@ -1041,14 +861,28 @@ export default function ShipperDashboard() {
     if (activeNav === 'compliance') return <ComplianceOverview />;
     if (activeNav === 'settings') return <Settings />;
     if (activeNav === 'help') return <AiHub />;
-    if (activeNav === 'analytics') return <ShipperAnalytics onNavigate={setActiveNav} />;
+    if (activeNav === 'analytics') return <ShipperAnalytics />;
     if (activeNav === 'messaging') return <Messaging initialThreadId={initialThreadId} />;
-    if (activeNav === 'profile') return <ShipperProfile />;
+    if (activeNav === 'profile') return (
+      <div>
+        <header className="fp-header">
+          <div className="fp-header-titles">
+            <h2>Profile</h2>
+            <p className="fp-subtitle">Complete your business profile and onboarding information.</p>
+          </div>
+        </header>
+        <section className="fp-grid" style={{ gridTemplateColumns: '1fr' }}>
+          <div style={{ gridColumn: '1 / -1', minWidth: 0 }}>
+            <ShipperProfile onProfileUpdate={refreshShipperProfile} />
+          </div>
+        </section>
+      </div>
+    );
     return (
       <div>
         <header className="fp-header">
           <div className="fp-header-titles">
-            <h2>{navGroups.flatMap(g => g.items).find(i => i.key === activeNav)?.label || t(language, 'common.view', 'View')}</h2>
+            <h2>{navGroups.flatMap(g => g.items).find(i => i.key === activeNav)?.label || 'View'}</h2>
             <p className="fp-subtitle">This is the {activeNav} view.</p>
           </div>
         </header>
@@ -1067,7 +901,7 @@ export default function ShipperDashboard() {
       <div className="fp-topbar">
         <div className="topbar-row topbar-row-1">
           <div className="topbar-left">
-            <button className="hamburger" aria-label={t(language, 'dashboard.openSidebar', 'Open sidebar')} onClick={() => setIsSidebarOpen(true)}>
+            <button className="hamburger" aria-label="Open sidebar" onClick={() => setIsSidebarOpen(true)}>
               <i className="fa-solid fa-bars" />
             </button>
             <div className="brand-block">
@@ -1083,8 +917,8 @@ export default function ShipperDashboard() {
                     <div className="company-name">Atlas Logistics LLC</div>
                     {/* Shipper-only status chips placed below the company name (column) */}
                     <div className="shipper-status">
-                      <span className="int-status-badge active"><i className="fa-solid fa-check"/> {t(language, 'dashboard.activeOperating', 'Active & Operating')}</span>
-                      <span className="int-status-badge blue"><i className="fa-solid fa-network-wired"/> {t(language, 'dashboard.tmsConnected', 'TMS Connected')}</span>
+                      <span className="int-status-badge active"><i className="fa-solid fa-check"/> Active & Operating</span>
+                      <span className="int-status-badge blue"><i className="fa-solid fa-network-wired"/> TMS Connected</span>
                     </div>
                   </div>
                 </div>
@@ -1125,7 +959,7 @@ export default function ShipperDashboard() {
                     }}
                   >
                     <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ fontWeight: 800, color: isDarkMode ? '#e2e8f0' : '#0f172a' }}>{t(language, 'common.notifications', 'Notifications')}</div>
+                      <div style={{ fontWeight: 800, color: isDarkMode ? '#e2e8f0' : '#0f172a' }}>Notifications</div>
                       <button
                         type="button"
                         className="btn small ghost-cd"
@@ -1134,13 +968,13 @@ export default function ShipperDashboard() {
                         }}
                         disabled={notifLoading}
                       >
-                        {notifLoading ? t(language, 'common.loading', 'Loading…') : t(language, 'common.refresh', 'Refresh')}
+                        {notifLoading ? 'Loading…' : 'Refresh'}
                       </button>
                     </div>
                     <div style={{ maxHeight: 420, overflowY: 'auto' }}>
                       {(notifItems || []).length === 0 ? (
                         <div style={{ padding: 14, color: isDarkMode ? '#94a3b8' : '#64748b', fontSize: 13 }}>
-                          {notifLoading ? t(language, 'common.loading', 'Loading…') : t(language, 'dashboard.noNotificationsYet', 'No notifications yet.')}
+                          {notifLoading ? 'Loading…' : 'No notifications yet.'}
                         </div>
                       ) : (
                         (notifItems || []).map((n) => {
@@ -1177,7 +1011,7 @@ export default function ShipperDashboard() {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                                   {hasAction ? (
                                     <button type="button" className="btn small ghost-cd" onClick={() => handleNotifAction(n)}>
-                                      {t(language, 'common.view', 'View')}
+                                      View
                                     </button>
                                   ) : null}
                                   {!isRead && (
@@ -1186,7 +1020,7 @@ export default function ShipperDashboard() {
                                       className="btn small ghost-cd"
                                       onClick={() => markNotificationRead(String(n?.id || '').trim())}
                                     >
-                                      {t(language, 'dashboard.markRead', 'Mark read')}
+                                      Mark read
                                     </button>
                                   )}
                                 </div>
@@ -1199,28 +1033,15 @@ export default function ShipperDashboard() {
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveNav('help');
-                  setIsSidebarOpen(false);
+              <i className="fa-solid fa-robot bot-icon" aria-hidden="true" />
+              <img
+                src={shipperProfile?.profile_picture_url || FALLBACK_AVATAR_URL}
+                alt="avatar"
+                className="avatar-img"
+                onError={(e) => {
+                  e.target.src = FALLBACK_AVATAR_URL;
                 }}
-                aria-label="Open AI Hub"
-                style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
-              >
-                <i className="fa-solid fa-robot bot-icon" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveNav('profile');
-                  setIsSidebarOpen(false);
-                }}
-                aria-label="Open Profile"
-                style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
-              >
-                <img src="https://randomuser.me/api/portraits/women/65.jpg" alt="avatar" className="avatar-img"/>
-              </button>
+              />
             </div>
           </div>
         </div>
@@ -1233,9 +1054,9 @@ export default function ShipperDashboard() {
               <div className="logo"><img src={logo} alt="FreightPower" className="landing-logo-image" /></div>
             </div>
             <div className="chips sidebar-chips">
-              <div className="company-name">Atlas Logistics LLC</div>
-              <span className="int-status-badge active">{t(language, 'dashboard.activeOperating', 'Active & Operating')}</span>
-              <span className="int-status-badge blue">{t(language, 'dashboard.tmsConnected', 'TMS Connected')}</span>
+              <div className="company-name">{shipperProfile?.company_name || 'Your Company'}</div>
+              <span className="int-status-badge active">Active & Operating</span>
+              <span className="int-status-badge blue">TMS Connected</span>
             </div>
           </div>
 
@@ -1265,18 +1086,18 @@ export default function ShipperDashboard() {
           </nav>
 
           <div className="sidebar-dark-control">
-            <span className="dark-label">{t(language, 'dashboard.darkMode', 'Dark Mode')}</span>
+            <span className="dark-label">Dark Mode</span>
             <button
               className="dark-toggle"
               aria-pressed={isDarkMode}
-              aria-label={t(language, 'dashboard.toggleDarkMode', 'Toggle dark mode')}
+              aria-label="Toggle dark mode"
               onClick={() => setIsDarkMode((s) => !s)}
             >
               <span className="dark-toggle-knob" />
             </button>
           </div>
 
-          <button className="sidebar-close" aria-label={t(language, 'dashboard.closeSidebar', 'Close sidebar')} onClick={() => setIsSidebarOpen(false)}>
+          <button className="sidebar-close" aria-label="Close sidebar" onClick={() => setIsSidebarOpen(false)}>
             <i className="fa-solid fa-xmark" />
           </button>
         </aside>
@@ -1326,4 +1147,3 @@ export default function ShipperDashboard() {
     </div>
   );
 }
-

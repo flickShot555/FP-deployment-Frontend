@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../config';
-import { useTr } from '../../i18n/useTr';
 import '../../styles/carrier/ComplianceSafety.css';
 
 export default function ComplianceSafety() {
   const { currentUser } = useAuth();
-  const { language, tr } = useTr();
-  const locale = language === 'Spanish' ? 'es-ES' : language === 'Arabic' ? 'ar' : 'en-US';
   const [selectedTask, setSelectedTask] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
@@ -17,81 +14,13 @@ export default function ComplianceSafety() {
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [analyzingAI, setAnalyzingAI] = useState(false);
 
-  const [basicScores, setBasicScores] = useState([]);
-  const [basicHistory, setBasicHistory] = useState([]);
-  const [basicLoading, setBasicLoading] = useState(false);
-  const [basicError, setBasicError] = useState('');
-
-  const buildBasicScoreCards = useCallback((derived) => {
-    const categories = [
-      { key: 'hos', name: tr('complianceSafety.basic.hos', 'Hours of Service'), icon: 'fa-clock', defaultThreshold: 65 },
-      { key: 'unsafe', name: tr('complianceSafety.basic.unsafe', 'Unsafe Driving'), icon: 'fa-car-crash', defaultThreshold: 65 },
-      { key: 'maintenance', name: tr('complianceSafety.basic.maintenance', 'Vehicle Maintenance'), icon: 'fa-wrench', defaultThreshold: 80 },
-      { key: 'crash', name: tr('complianceSafety.basic.crash', 'Crash Indicator'), icon: 'fa-chart-line', defaultThreshold: 65 },
-      { key: 'drug', name: tr('complianceSafety.basic.drug', 'Drugs/Alcohol'), icon: 'fa-pills', defaultThreshold: 50 },
-      { key: 'hazmat', name: tr('complianceSafety.basic.hazmat', 'HazMat'), icon: 'fa-radiation', defaultThreshold: null },
-    ];
-
-    const safeDerived = (derived && typeof derived === 'object') ? derived : {};
-
-    const classify = (percentile, threshold) => {
-      if (percentile == null || threshold == null) return 'neutral';
-      if (percentile >= threshold) return 'critical';
-      if (percentile >= Math.round(threshold * 0.85)) return 'warning';
-      return 'success';
-    };
-
-    return categories.map((c) => {
-      const d = safeDerived[c.key] || {};
-      const percentile = (typeof d.percentile === 'number') ? d.percentile : null;
-      const threshold = (typeof d.threshold === 'number') ? d.threshold : c.defaultThreshold;
-
-      return {
-        name: c.name,
-        score: (typeof percentile === 'number') ? `${percentile}%` : tr('common.na', 'N/A'),
-        threshold: (typeof threshold === 'number') ? `${threshold}%` : tr('complianceSafety.basic.notApplicable', 'Not Applicable'),
-        status: classify(percentile, threshold),
-        icon: c.icon,
-        _key: c.key,
-        _percentile: percentile,
-        _threshold: threshold,
-      };
-    });
-  }, [tr]);
-
-  const fetchBasicScores = useCallback(async (token) => {
-    setBasicLoading(true);
-    setBasicError('');
-    try {
-      const res = await fetch(`${API_URL}/compliance/basic-scores`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || tr('complianceSafety.errors.basicScoresFailed', 'Failed to load BASIC scores'));
-      }
-      const data = await res.json();
-      const derived = data?.derived || {};
-      setBasicScores(buildBasicScoreCards(derived));
-      setBasicHistory(Array.isArray(data?.history) ? data.history : []);
-    } catch (e) {
-      console.warn('BASIC scores fetch warning:', e);
-      setBasicError(e?.message || tr('complianceSafety.errors.basicScoresUnavailable', 'Unable to load BASIC scores'));
-      setBasicScores(buildBasicScoreCards({}));
-      setBasicHistory([]);
-    } finally {
-      setBasicLoading(false);
-    }
-  }, [buildBasicScoreCards, tr]);
-
   // Compliance data from API
   const [complianceData, setComplianceData] = useState({
     dotNumber: '',
     mcNumber: '',
     authorityType: 'Common Carrier',
     dotStatus: 'Pending',
-    lastFmcsaSyncState: 'never', // never | success | failed
-    lastFmcsaSyncAt: null,
+    lastFmsaSync: 'Never synced',
     nextReview: 'Pending',
     auditTrial: 'View History',
     insuranceStatus: 'Unknown',
@@ -154,9 +83,6 @@ export default function ComplianceSafety() {
           if (dot || mc) {
             await fetchFmcsaInfo(token, dot, mc);
           }
-
-          // Fetch BASIC scores/trends (cached per-user on backend)
-          await fetchBasicScores(token);
         }
 
         // Fetch compliance tasks
@@ -176,7 +102,7 @@ export default function ComplianceSafety() {
     };
 
     fetchComplianceData();
-  }, [currentUser, fetchBasicScores]);
+  }, [currentUser]);
 
   // AI Analysis function
   const runAIAnalysis = async () => {
@@ -229,10 +155,9 @@ export default function ComplianceSafety() {
           safetyRating: data.safety_rating || prev.safetyRating,
           mcNumber: data.mc_number || mcNumber || prev.mcNumber,
           dotNumber: data.usdot || dotNumber || prev.dotNumber,
-          lastFmcsaSyncState: 'success',
-          lastFmcsaSyncAt: now,
+          lastFmsaSync: `Today, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
         }));
-        setSyncSuccess(tr('complianceSafety.sync.success', 'FMCSA data synced successfully!'));
+        setSyncSuccess('FMCSA data synced successfully!');
         setTimeout(() => setSyncSuccess(''), 5000);
       } else {
         const errorData = await response.json().catch(() => ({}));
@@ -255,16 +180,14 @@ export default function ComplianceSafety() {
     try {
       const token = await currentUser.getIdToken();
       await fetchFmcsaInfo(token, complianceData.dotNumber, complianceData.mcNumber);
-      await fetchBasicScores(token);
     } catch (error) {
       console.error('FMCSA sync error:', error);
       const now = new Date();
       setComplianceData(prev => ({
         ...prev,
-        lastFmcsaSyncState: 'failed',
-        lastFmcsaSyncAt: now,
+        lastFmsaSync: `Failed at ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
       }));
-      setSyncError(tr('complianceSafety.sync.failed', 'Failed to sync FMCSA data. Please check your DOT/MC numbers and try again.'));
+      setSyncError('Failed to sync FMCSA data. Please check your DOT/MC numbers and try again.');
       setTimeout(() => setSyncError(''), 5000);
     } finally {
       setSyncing(false);
@@ -280,47 +203,59 @@ export default function ComplianceSafety() {
     completeness: complianceStatus.breakdown.document_completeness || complianceStatus.breakdown.completeness || 0
   };
 
-  const trendCategories = [
-    { key: 'hos', name: tr('complianceSafety.basic.hos', 'Hours of Service') },
-    { key: 'unsafe', name: tr('complianceSafety.basic.unsafe', 'Unsafe Driving') },
-    { key: 'maintenance', name: tr('complianceSafety.basic.maintenance', 'Vehicle Maintenance') },
-    { key: 'crash', name: tr('complianceSafety.basic.crash', 'Crash Indicator') },
-    { key: 'drug', name: tr('complianceSafety.basic.drug', 'Drugs/Alcohol') },
-    { key: 'hazmat', name: tr('complianceSafety.basic.hazmat', 'HazMat') },
+  const basicScores = [
+    { 
+      name: 'Hours of Service', 
+      score: '15%', 
+      threshold: '65%', 
+      status: 'success',
+      icon: 'fa-clock'
+    },
+    { 
+      name: 'Unsafe Driving', 
+      score: '8%', 
+      threshold: '65%', 
+      status: 'success',
+      icon: 'fa-car-crash'
+    },
+    { 
+      name: 'Vehicle Maintenance', 
+      score: '45%', 
+      threshold: '80%', 
+      status: 'warning',
+      icon: 'fa-wrench'
+    },
+    { 
+      name: 'Crash Indicator', 
+      score: '12%', 
+      threshold: '65%', 
+      status: 'success',
+      icon: 'fa-chart-line'
+    },
+    { 
+      name: 'Drugs/Alcohol', 
+      score: '0%', 
+      threshold: '50%', 
+      status: 'success',
+      icon: 'fa-pills'
+    },
+    { 
+      name: 'HazMat', 
+      score: 'N/A', 
+      threshold: 'Not Applicable', 
+      status: 'neutral',
+      icon: 'fa-radiation'
+    }
   ];
-
-  const getTrendPoints = (categoryKey) => {
-    const items = Array.isArray(basicHistory) ? basicHistory : [];
-    const last = items.slice(-6);
-    return last.map((it) => {
-      const derived = it?.derived || {};
-      const d = derived?.[categoryKey] || {};
-      const percentile = (typeof d.percentile === 'number') ? d.percentile : null;
-      return {
-        day: it?.day || '',
-        percentile,
-      };
-    });
-  };
-
-  const trendDeltaText = (points) => {
-    if (!Array.isArray(points) || points.length < 2) return '';
-    const a = points[points.length - 2]?.percentile;
-    const b = points[points.length - 1]?.percentile;
-    if (typeof a !== 'number' || typeof b !== 'number') return '';
-    const delta = b - a;
-    if (delta === 0) return tr('complianceSafety.trends.noChange', 'No change');
-    return delta > 0 ? `+${delta}%` : `${delta}%`;
-  };
 
   // Default tasks if API returns empty
   const defaultTasks = [
     {
       id: 'default-1',
       type: 'info',
-      title: tr('complianceSafety.defaultTasks.onboarding.title', 'Complete Onboarding'),
-      description: tr('complianceSafety.defaultTasks.onboarding.description', 'Upload required documents to improve compliance score'),
-      actions: [tr('complianceSafety.defaultTasks.onboarding.action', 'Go to Onboarding')],
+      title: 'Complete Onboarding',
+      description: 'Upload required documents to improve compliance score',
+      actions: ['Go to Onboarding'],
       icon: 'fa-clipboard-list'
     }
   ];
@@ -336,44 +271,9 @@ export default function ComplianceSafety() {
     return {
       name: displayName,
       status: doc.is_expired ? 'missing' : doc.is_expiring_soon ? 'warning' : doc.status === 'valid' ? 'valid' : 'active',
-      expires: doc.expiry_date ? new Date(doc.expiry_date).toLocaleDateString(locale) : null
+      expires: doc.expiry_date ? new Date(doc.expiry_date).toLocaleDateString() : null
     };
   });
-
-  const lastSyncLabel = (() => {
-    const at = complianceData.lastFmcsaSyncAt ? new Date(complianceData.lastFmcsaSyncAt) : null;
-    const time = at && !Number.isNaN(at.getTime())
-      ? at.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true })
-      : '';
-
-    if (complianceData.lastFmcsaSyncState === 'success' && time) {
-      return `${tr('complianceSafety.sync.today', 'Today')}, ${time}`;
-    }
-    if (complianceData.lastFmcsaSyncState === 'failed' && time) {
-      return `${tr('complianceSafety.sync.failedAtPrefix', 'Failed at')} ${time}`;
-    }
-    return tr('complianceSafety.sync.never', 'Never synced');
-  })();
-
-  const insuranceLabel = (() => {
-    const status = String(complianceData.insuranceStatus || '').trim();
-    const expiry = complianceData.insuranceExpiry ? new Date(complianceData.insuranceExpiry) : null;
-    const expiryText = expiry && !Number.isNaN(expiry.getTime()) ? expiry.toLocaleDateString(locale) : '';
-
-    if (expiryText) {
-      return `${tr('complianceSafety.insurance.expiresPrefix', 'Expires')} ${expiryText}`;
-    }
-    if (!status) return tr('common.unknown', 'Unknown');
-    if (status.toLowerCase() === 'unknown') return tr('common.unknown', 'Unknown');
-    return status;
-  })();
-
-  const safetyRatingLabel = (() => {
-    const raw = String(complianceData.safetyRating || '').trim();
-    if (!raw || raw.toLowerCase() === 'n/a') return tr('common.na', 'N/A');
-    if (raw.toLowerCase() === 'satisfactory') return tr('complianceSafety.safetyRating.satisfactory', 'Satisfactory');
-    return raw;
-  })();
 
   const getStatusClass = (status) => {
     switch (status) {
@@ -390,17 +290,17 @@ export default function ComplianceSafety() {
       {/* Header */}
       <header className="compliance-header">
         <div className="header-content">
-          <h1>{tr('complianceSafety.title', 'Compliance & Safety')}</h1>
-          <p className="header-subtitle">{tr('complianceSafety.subtitle', 'Monitor FMCSA compliance, safety ratings, and risk management')}</p>
+          <h1>Compliance & Safety</h1>
+          <p className="header-subtitle">Monitor FMCSA compliance, safety ratings, and risk management</p>
         </div>
         <div className="header-actions">
           <button className="btn small-cd">
             <i className="fa-solid fa-camera" style={{color: 'white'}}></i>
-            {tr('complianceSafety.actions.availableSnapshots', 'Available Snapshots')}
+            Available Snapshots
           </button>
           <button className="btn small-cd" onClick={handleFmcsaSync} disabled={syncing}>
             <i className={`fa-solid fa-sync ${syncing ? 'fa-spin' : ''}`} style={{color: 'white'}}></i>
-            {syncing ? tr('complianceSafety.actions.syncing', 'Syncing...') : tr('complianceSafety.actions.runNightlySync', 'Run Nightly Sync')}
+            {syncing ? 'Syncing...' : 'Run Nightly Sync'}
           </button>
         </div>
       </header>
@@ -415,7 +315,7 @@ export default function ComplianceSafety() {
           color: '#6366f1'
         }}>
           <i className="fa-solid fa-spinner fa-spin" style={{fontSize: '2rem', marginRight: 12}}></i>
-          <span>{tr('complianceSafety.loading', 'Loading compliance data...')}</span>
+          <span>Loading compliance data...</span>
         </div>
       )}
 
@@ -457,50 +357,50 @@ export default function ComplianceSafety() {
         <div className="compliance-left">
           {/* Compliance Profile Overview */}
           <div className="compliance-card profile-overview">
-            <h3>{tr('complianceSafety.profile.title', 'Compliance Profile Overview')}</h3>
+            <h3>Compliance Profile Overview</h3>
             <div className="profile-details">
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.dotNumber', 'DOT Number')}</span>
-                <span className="value">{complianceData.dotNumber || tr('common.na', 'N/A')}</span>
+                <span className="label">DOT Number</span>
+                <span className="value">{complianceData.dotNumber}</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.mcNumber', 'MC Number')}</span>
-                <span className="value">{complianceData.mcNumber || tr('common.na', 'N/A')}</span>
+                <span className="label">MC Number</span>
+                <span className="value">{complianceData.mcNumber}</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.authorityType', 'Authority Type')}</span>
-                <span className="value">{complianceData.authorityType || tr('common.na', 'N/A')}</span>
+                <span className="label">Authority Type</span>
+                <span className="value">{complianceData.authorityType}</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.dotStatus', 'DOT Status')}</span>
-                <span className="value status active">{complianceData.dotStatus || tr('common.na', 'N/A')}</span>
+                <span className="label">DOT Status</span>
+                <span className="value status active">{complianceData.dotStatus}</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.insuranceStatus', 'Insurance Status')}</span>
-                <span className="value status expiring">{insuranceLabel}</span>
+                <span className="label">Insurance Status</span>
+                <span className="value status expiring">Expiring 03/15/2025</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.safetyRating', 'Safety Rating')}</span>
-                <span className="value status satisfactory">{safetyRatingLabel}</span>
+                <span className="label">Safety Rating</span>
+                <span className="value status satisfactory">Satisfactory</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.lastFmcsaSync', 'Last FMCSA Sync')}</span>
-                <span className="value">{lastSyncLabel}</span>
+                <span className="label">Last FMCSA Sync</span>
+                <span className="value">{complianceData.lastFmsaSync}</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.nextReview', 'Next Review')}</span>
-                <span className="value">{complianceData.nextReview || tr('common.pending', 'Pending')}</span>
+                <span className="label">Next Review</span>
+                <span className="value">{complianceData.nextReview}</span>
               </div>
               <div className="profile-row">
-                <span className="label">{tr('complianceSafety.profile.auditTrail', 'Audit Trail')}</span>
-                <span className="value link">{complianceData.auditTrial || tr('complianceSafety.profile.viewHistory', 'View History')}</span>
+                <span className="label">Audit Trail</span>
+                <span className="value link">{complianceData.auditTrial}</span>
               </div>
             </div>
           </div>
 
           {/* BASIC Scores */}
           <div className="compliance-card basic-scores">
-            <h3>{tr('complianceSafety.basicScores.title', 'BASIC Scores')}</h3>
+            <h3>BASIC Scores</h3>
             <div className="scores-grid">
               {basicScores.map((score, index) => (
                 <div key={index} className={`score-item ${getStatusClass(score.status)}`}>
@@ -510,12 +410,11 @@ export default function ComplianceSafety() {
                     <i className={`fa-solid ${
                       score.status === 'success' ? 'fa-circle-check' : 
                       score.status === 'warning' ? 'fa-triangle-exclamation' : 
-                      score.status === 'critical' ? 'fa-circle-xmark' :
                       'fa-circle-info'
                     } status-icon`}></i>
                   </div>
                   <div className="score-value">{score.score}</div>
-                  <div className="score-threshold">{tr('complianceSafety.basicScores.thresholdPrefix', 'Threshold:')} {score.threshold}</div>
+                  <div className="score-threshold">Threshold: {score.threshold}</div>
                 </div>
               ))}
             </div>
@@ -523,60 +422,18 @@ export default function ComplianceSafety() {
 
           {/* BASIC Score Trends */}
           <div className="compliance-card score-trends">
-            <h3>{tr('complianceSafety.trends.title', 'BASIC Score Trends')}</h3>
-            {basicLoading ? (
-              <div className="trends-placeholder">
-                <i className="fa-solid fa-spinner fa-spin trend-icon"></i>
-                <p>{tr('complianceSafety.trends.loading', 'Loading score trends...')}</p>
-              </div>
-            ) : basicError ? (
-              <div className="trends-placeholder">
-                <i className="fa-solid fa-triangle-exclamation trend-icon"></i>
-                <p>{basicError}</p>
-              </div>
-            ) : (Array.isArray(basicHistory) && basicHistory.length > 0) ? (
-              <div className="basic-trends">
-                {trendCategories.map((cat) => {
-                  const points = getTrendPoints(cat.key);
-                  const delta = trendDeltaText(points);
-
-                  return (
-                    <div key={cat.key} className="trend-row">
-                      <div className="trend-row-header">
-                        <span className="trend-name">{cat.name}</span>
-                        {delta ? <span className="trend-delta">{delta}</span> : null}
-                      </div>
-                      <div className="trend-bars" aria-label={`${cat.name} trend`}>
-                        {points.map((p, idx) => {
-                          const h = (typeof p.percentile === 'number') ? Math.max(0, Math.min(100, p.percentile)) : 0;
-                          return (
-                            <div
-                              key={`${cat.key}-${idx}`}
-                              className="trend-bar-wrap"
-                              title={p.day ? `${p.day}: ${p.percentile == null ? tr('common.na', 'N/A') : `${p.percentile}%`}` : (p.percentile == null ? tr('common.na', 'N/A') : `${p.percentile}%`)}
-                            >
-                              <div className={`trend-bar ${p.percentile == null ? 'neutral' : ''}`} style={{ height: `${h}%` }} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="trends-placeholder">
-                <i className="fa-solid fa-chart-line trend-icon"></i>
-                <p>{tr('complianceSafety.trends.empty', 'No trend history yet. Use “Run Nightly Sync” to start tracking.')}</p>
-              </div>
-            )}
+            <h3>BASIC Score Trends</h3>
+            <div className="trends-placeholder">
+              <i className="fa-solid fa-chart-line trend-icon"></i>
+              <p>Score trend visualization would appear here</p>
+            </div>
           </div>
 
           {/* Compliance Tasks */}
           <div className="compliance-card compliance-tasks">
             <div className="tasks-header">
-              <h3>{tr('complianceSafety.tasks.title', 'Compliance Tasks')}</h3>
-              <span className="task-count">{complianceTasks.length} {tr('complianceSafety.tasks.criticalLabel', 'Critical')}</span>
+              <h3>Compliance Tasks</h3>
+              <span className="task-count">{complianceTasks.length} Critical</span>
             </div>
             
             <div className="tasks-list">
@@ -595,7 +452,7 @@ export default function ComplianceSafety() {
                     </div>
                   </div>
                   <div className="task-time">
-                    {task.type === 'critical' ? tr('complianceSafety.tasks.sampleTimeCritical', '2:45 PM') : tr('complianceSafety.tasks.sampleTimeOther', '1:30 PM')}
+                    {task.type === 'critical' ? '2:45 PM' : '1:30 PM'}
                   </div>
                 </div>
               ))}
@@ -607,7 +464,7 @@ export default function ComplianceSafety() {
         <div className="compliance-right">
           {/* AI Compliance Score */}
           <div className="compliance-card ai-score">
-            <h3>{tr('complianceSafety.ai.title', 'AI Compliance Score')}</h3>
+            <h3>AI Compliance Score</h3>
             <div className="score-circle">
               <div className="score-progress">
                 <svg viewBox="0 0 100 100" className="progress-ring">
@@ -632,30 +489,30 @@ export default function ComplianceSafety() {
                   />
                 </svg>
                 <div className="score-number" style={{color: aiScore >= 80 ? '#22c55e' : aiScore >= 50 ? '#f59e0b' : '#dc2626'}}>{aiScore}</div>
-                <div className="score-label">{tr('complianceSafety.ai.scoreLabel', 'Score')}</div>
+                <div className="score-label">Score</div>
               </div>
             </div>
             <div className="score-breakdown">
               <div className="breakdown-item">
-                <span className="breakdown-label">{tr('complianceSafety.ai.breakdown.documentCompleteness', 'Document Completeness')}</span>
+                <span className="breakdown-label">Document Completeness</span>
                 <span className="breakdown-value">{Math.round(scoreBreakdown.documents)}%</span>
               </div>
               <div className="breakdown-item">
-                <span className="breakdown-label">{tr('complianceSafety.ai.breakdown.dataAccuracy', 'Data Accuracy')}</span>
+                <span className="breakdown-label">Data Accuracy</span>
                 <span className="breakdown-value">{Math.round(scoreBreakdown.verification)}%</span>
               </div>
               <div className="breakdown-item">
-                <span className="breakdown-label">{tr('complianceSafety.ai.breakdown.regulatoryCompliance', 'Regulatory Compliance')}</span>
+                <span className="breakdown-label">Regulatory Compliance</span>
                 <span className="breakdown-value">{Math.round(scoreBreakdown.expiry_status)}%</span>
               </div>
               <div className="breakdown-item">
-                <span className="breakdown-label">{tr('complianceSafety.ai.breakdown.overallCompleteness', 'Overall Completeness')}</span>
+                <span className="breakdown-label">Overall Completeness</span>
                 <span className="breakdown-value">{Math.round(scoreBreakdown.completeness)}%</span>
               </div>
             </div>
             <button className="btn small-cd" style={{width: '100%'}} onClick={runAIAnalysis} disabled={analyzingAI}>
               <i className={`fa-solid fa-robot ${analyzingAI ? 'fa-spin' : ''}`} style={{marginRight: 8}}></i>
-              {analyzingAI ? tr('complianceSafety.ai.analyzing', 'Analyzing...') : tr('complianceSafety.ai.getAnalysis', 'Get AI Analysis')}
+              {analyzingAI ? 'Analyzing...' : 'Get AI Analysis'}
             </button>
 
             {/* AI Analysis Results */}
@@ -663,11 +520,11 @@ export default function ComplianceSafety() {
               <div style={{marginTop: 16, padding: 12, background: '#f8fafc', borderRadius: 8}}>
                 <div style={{fontWeight: 700, marginBottom: 8, color: '#1e293b'}}>
                   <i className="fa-solid fa-brain" style={{marginRight: 8, color: '#6366f1'}}></i>
-                  {tr('complianceSafety.ai.analysisTitle', 'AI Analysis')}
+                  AI Analysis
                 </div>
                 <p style={{fontSize: '0.9rem', color: '#475569', marginBottom: 8}}>{aiAnalysis.summary}</p>
                 <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8}}>
-                  <span style={{fontSize: '0.85rem', fontWeight: 600}}>{tr('complianceSafety.ai.riskLevelLabel', 'Risk Level:')}</span>
+                  <span style={{fontSize: '0.85rem', fontWeight: 600}}>Risk Level:</span>
                   <span style={{
                     padding: '2px 8px',
                     borderRadius: 4,
@@ -676,16 +533,12 @@ export default function ComplianceSafety() {
                     background: aiAnalysis.risk_level === 'low' ? '#dcfce7' : aiAnalysis.risk_level === 'high' ? '#fee2e2' : '#fef3c7',
                     color: aiAnalysis.risk_level === 'low' ? '#166534' : aiAnalysis.risk_level === 'high' ? '#991b1b' : '#92400e'
                   }}>
-                    {String(aiAnalysis.risk_level || '').toLowerCase() === 'low'
-                      ? tr('complianceSafety.ai.riskLevel.low', 'LOW')
-                      : String(aiAnalysis.risk_level || '').toLowerCase() === 'high'
-                        ? tr('complianceSafety.ai.riskLevel.high', 'HIGH')
-                        : tr('complianceSafety.ai.riskLevel.medium', 'MEDIUM')}
+                    {aiAnalysis.risk_level?.toUpperCase()}
                   </span>
                 </div>
                 {aiAnalysis.immediate_actions?.length > 0 && (
                   <div style={{marginTop: 8}}>
-                    <div style={{fontSize: '0.85rem', fontWeight: 600, marginBottom: 4}}>{tr('complianceSafety.ai.immediateActions', 'Immediate Actions:')}</div>
+                    <div style={{fontSize: '0.85rem', fontWeight: 600, marginBottom: 4}}>Immediate Actions:</div>
                     <ul style={{margin: 0, paddingLeft: 20, fontSize: '0.85rem', color: '#64748b'}}>
                       {aiAnalysis.immediate_actions.slice(0, 3).map((action, i) => (
                         <li key={i}>{typeof action === 'string' ? action : action.title}</li>
@@ -699,7 +552,7 @@ export default function ComplianceSafety() {
 
           {/* Compliance Documents */}
           <div className="compliance-card compliance-documents">
-            <h3>{tr('complianceSafety.documents.title', 'Compliance Documents')}</h3>
+            <h3>Compliance Documents</h3>
             <div className="compliance-documents-list">
               {complianceDocuments.map((doc, index) => (
                 <div key={index} className={`compliance-document-row ${doc.status}`} style={{boxShadow: 'none', border: 'none', margin: 0}}>
@@ -713,17 +566,14 @@ export default function ComplianceSafety() {
                     <div className="document-name" style={{fontWeight: 700, color: '#222e3a', fontSize: '1rem', marginBottom: 2}}>{doc.name}</div>
                     {doc.expires && (
                       <div className="document-expires" style={{fontSize: '0.93rem', color: '#64748b'}}>
-                        {doc.status === 'valid'
-                          ? tr('complianceSafety.documents.validUntil', 'Valid until')
-                          : tr('complianceSafety.documents.expires', 'Expires')}{' '}
-                        {doc.expires}
+                        {doc.status === 'valid' ? 'Valid until' : 'Expires'} {doc.expires}
                       </div>
                     )}
                     {doc.status === 'active' && !doc.expires && (
-                      <div className="document-status" style={{fontSize: '0.93rem', color: '#64748b'}}>{tr('common.active', 'Active')}</div>
+                      <div className="document-status" style={{fontSize: '0.93rem', color: '#64748b'}}>Active</div>
                     )}
                     {doc.status === 'missing' && (
-                      <div className="document-status missing">{tr('complianceSafety.documents.missing', 'Missing')}</div>
+                      <div className="document-status missing">Missing</div>
                     )}
                   </div>
                   <i className={`fa-solid ${
@@ -737,7 +587,7 @@ export default function ComplianceSafety() {
                 </div>
               ))}
             </div>
-            <button className="btn small-cd"style={{width: '100%'}}>{tr('complianceSafety.documents.goToDocumentVault', 'Go to Document Vault')}</button>
+            <button className="btn small-cd"style={{width: '100%'}}>Go to Document Vault</button>
           </div>
         </div>
       </div>

@@ -1,106 +1,44 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { API_URL } from '../../config';
 import { auth } from '../../firebase';
-import { useTr } from '../../i18n/useTr';
 
 export default function LoadDetailsModal({ load, onClose }) {
-  const { language, tr } = useTr();
-  const locale = language === 'Spanish' ? 'es-ES' : language === 'Arabic' ? 'ar' : 'en-US';
-  const fmtMoney = (amt) => {
-    const n = Number(amt);
-    if (!Number.isFinite(n)) return tr('common.na', 'N/A');
-    try {
-      return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(n);
-    } catch {
-      return `$${n.toFixed(2)}`;
-    }
-  };
-
   const [loadDetails, setLoadDetails] = useState(load || null);
   const [loadLoading, setLoadLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
+
+  const [rcSigHasInk, setRcSigHasInk] = useState(false);
+  const rcSigCanvasRef = React.useRef(null);
+  const rcSigDrawRef = React.useRef({ drawing: false, lastX: 0, lastY: 0 });
 
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState('');
   const [documents, setDocuments] = useState([]);
 
+  const [uploadKind, setUploadKind] = useState('OTHER');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+
+  const [signing, setSigning] = useState(false);
+  const [signError, setSignError] = useState('');
+
   const loadId = String(loadDetails?.load_id || loadDetails?.id || load?.load_id || load?.id || '').trim();
 
-  const openDocumentUrl = useCallback(
-    async (rawUrl) => {
-      const url = String(rawUrl || '').trim();
-      if (!url) return;
-      if (url.toLowerCase().startsWith('epod:')) return;
-
-      // Backend download endpoints require Authorization; clicking a normal <a> won't include it.
-      let pathname = '';
-      try {
-        pathname = new URL(url, window.location.href).pathname;
-      } catch {
-        pathname = '';
-      }
-      const isBackendDownload = /\/loads\/[^/]+\/documents\/[^/]+\/download$/.test(pathname);
-
-      if (!isBackendDownload) {
-        window.open(url, '_blank', 'noopener,noreferrer');
-        return;
-      }
-
-      const user = auth.currentUser;
-      if (!user) {
-        setDocsError(tr('auth.notAuthenticated', 'Not authenticated'));
-        return;
-      }
-      try {
-        const token = await user.getIdToken();
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) {
-          setDocsError(`${tr('loadDetails.errors.openDocumentFailed', 'Failed to open document')} (${res.status})`);
-          return;
-        }
-        const blob = await res.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        window.open(objectUrl, '_blank', 'noopener,noreferrer');
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-      } catch (e) {
-        setDocsError(e?.message || tr('loadDetails.errors.openDocumentFailed', 'Failed to open document'));
-      }
-    },
-    [setDocsError, tr]
-  );
-
-  const workflowDisplay = useMemo(() => {
-    const wf = String(loadDetails?.workflow_status || '').trim();
-    if (wf) return wf;
-    const st = String(loadDetails?.status || '').trim();
-    if (!st) return tr('common.na', 'N/A');
-    return st.replace(/_/g, ' ');
-  }, [loadDetails?.workflow_status, loadDetails?.status, tr]);
-
-  const docsByKind = useMemo(() => {
-    const map = new Map();
-    (documents || []).forEach((d) => {
-      const kind = String(d?.kind || '').toUpperCase().trim();
-      if (!kind) return;
-      if (!map.has(kind)) map.set(kind, d);
-    });
-    return map;
-  }, [documents]);
-
   const rcDoc = useMemo(() => {
-    const doc = docsByKind.get('RATE_CONFIRMATION');
+    const doc = (documents || []).find((d) => String(d?.kind || '').toUpperCase() === 'RATE_CONFIRMATION');
     if (doc) return doc;
     const url = String(loadDetails?.rate_confirmation_url || '').trim();
-    return url ? { kind: 'RATE_CONFIRMATION', url, filename: tr('loadDetails.docs.rateConfirmation', 'Rate Confirmation') } : null;
-  }, [docsByKind, loadDetails?.rate_confirmation_url, tr]);
+    return url ? { kind: 'RATE_CONFIRMATION', url, filename: 'Rate Confirmation' } : null;
+  }, [documents, loadDetails?.rate_confirmation_url]);
 
-  const bolDoc = useMemo(() => {
-    return docsByKind.get('BOL') || docsByKind.get('BILL_OF_LADING') || null;
-  }, [docsByKind]);
-
-  const podDoc = useMemo(() => {
-    return docsByKind.get('POD') || docsByKind.get('PROOF_OF_DELIVERY') || null;
-  }, [docsByKind]);
+  const rcSignature = useMemo(() => {
+    const contract = loadDetails?.contract;
+    const rc = contract?.rate_confirmation;
+    return {
+      shipperSignedAt: rc?.shipper_signed_at || null,
+      carrierSignedAt: rc?.carrier_signed_at || null,
+    };
+  }, [loadDetails?.contract]);
 
   const refreshLoad = async () => {
     if (!loadId) return;
@@ -117,13 +55,13 @@ export default function LoadDetailsModal({ load, onClose }) {
         },
       });
       if (!res.ok) {
-        setLoadError(tr('loadDetails.errors.loadDetailsFailed', 'Failed to load details'));
+        setLoadError('Failed to load details');
         return;
       }
       const data = await res.json();
       setLoadDetails(data?.load || data);
     } catch (e) {
-      setLoadError(e?.message || tr('loadDetails.errors.loadDetailsFailed', 'Failed to load details'));
+      setLoadError(e?.message || 'Failed to load details');
     } finally {
       setLoadLoading(false);
     }
@@ -142,14 +80,14 @@ export default function LoadDetailsModal({ load, onClose }) {
       });
       if (!res.ok) {
         setDocuments([]);
-        setDocsError(tr('loadDetails.errors.loadDocumentsFailed', 'Failed to load documents'));
+        setDocsError('Failed to load documents');
         return;
       }
       const data = await res.json();
       setDocuments(Array.isArray(data?.documents) ? data.documents : []);
     } catch (e) {
       setDocuments([]);
-      setDocsError(e?.message || tr('loadDetails.errors.loadDocumentsFailed', 'Failed to load documents'));
+      setDocsError(e?.message || 'Failed to load documents');
     } finally {
       setDocsLoading(false);
     }
@@ -164,6 +102,149 @@ export default function LoadDetailsModal({ load, onClose }) {
     fetchDocs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadId]);
+
+  useEffect(() => {
+    if (!loadId) return;
+    initRcSigCanvas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadId]);
+
+  const onUploadDoc = async (file) => {
+    if (!loadId || !file) return;
+    const user = auth.currentUser;
+    if (!user) return;
+    setUploading(true);
+    setUploadError('');
+    try {
+      const token = await user.getIdToken();
+      const form = new FormData();
+      form.append('file', file);
+      form.append('kind', uploadKind);
+
+      const res = await fetch(`${API_URL}/loads/${encodeURIComponent(loadId)}/documents/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+
+      if (!res.ok) {
+        let msg = 'Upload failed';
+        try {
+          const err = await res.json();
+          msg = err?.detail || err?.message || msg;
+        } catch {
+          // ignore
+        }
+        setUploadError(msg);
+        return;
+      }
+
+      await fetchDocs();
+      await refreshLoad();
+    } catch (e) {
+      setUploadError(e?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const carrierSignRateConfirmation = async () => {
+    if (!loadId) return;
+    const user = auth.currentUser;
+    if (!user) return;
+    setSigning(true);
+    setSignError('');
+    try {
+      const token = await user.getIdToken();
+      const signerName = String(user?.displayName || user?.email || '').trim() || undefined;
+
+      const canvas = rcSigCanvasRef.current;
+      const signatureDataUrl = canvas ? canvas.toDataURL('image/png') : '';
+      if (!rcSigHasInk || !signatureDataUrl) {
+        setSignError('Signature is required.');
+        return;
+      }
+
+      const res = await fetch(`${API_URL}/loads/${encodeURIComponent(loadId)}/rate-confirmation/carrier-sign`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ signer_name: signerName, signature_data_url: signatureDataUrl }),
+      });
+      if (!res.ok) {
+        let msg = 'Failed to sign';
+        try {
+          const err = await res.json();
+          msg = err?.detail || err?.message || msg;
+        } catch {
+          // ignore
+        }
+        setSignError(msg);
+        return;
+      }
+      await refreshLoad();
+      await fetchDocs();
+    } catch (e) {
+      setSignError(e?.message || 'Failed to sign');
+    } finally {
+      setSigning(false);
+    }
+  };
+
+  const initRcSigCanvas = () => {
+    const canvas = rcSigCanvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = 520;
+    const cssH = 160;
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#111827';
+    ctx.clearRect(0, 0, cssW, cssH);
+    setRcSigHasInk(false);
+  };
+
+  const clearRcSig = () => {
+    initRcSigCanvas();
+  };
+
+  const rcSigPointerDown = (e) => {
+    const canvas = rcSigCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? 0) - rect.left;
+    const y = (e.clientY ?? 0) - rect.top;
+    rcSigDrawRef.current = { drawing: true, lastX: x, lastY: y };
+  };
+
+  const rcSigPointerMove = (e) => {
+    const canvas = rcSigCanvasRef.current;
+    if (!canvas) return;
+    if (!rcSigDrawRef.current.drawing) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? 0) - rect.left;
+    const y = (e.clientY ?? 0) - rect.top;
+    const ctx = canvas.getContext('2d');
+    ctx.beginPath();
+    ctx.moveTo(rcSigDrawRef.current.lastX, rcSigDrawRef.current.lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    rcSigDrawRef.current.lastX = x;
+    rcSigDrawRef.current.lastY = y;
+    setRcSigHasInk(true);
+  };
+
+  const rcSigPointerUp = () => {
+    rcSigDrawRef.current.drawing = false;
+  };
 
   if (!loadId) return null;
 
@@ -202,13 +283,11 @@ export default function LoadDetailsModal({ load, onClose }) {
           }}
         >
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: '#111827' }}>{tr('loadDetails.title', 'Load Details')}</div>
-            <div style={{ marginTop: 2, color: '#6b7280', fontSize: 13 }}>
-              {tr('loadDetails.loadPrefix', 'Load:')} {loadId}{loadLoading ? ` · ${tr('common.loading', 'Loading…')}` : ''}
-            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#111827' }}>Load Details</div>
+            <div style={{ marginTop: 2, color: '#6b7280', fontSize: 13 }}>Load: {loadId}</div>
           </div>
           <button className="btn small ghost-cd" onClick={onClose} type="button">
-            {tr('common.close', 'Close')}
+            Close
           </button>
         </div>
 
@@ -218,45 +297,90 @@ export default function LoadDetailsModal({ load, onClose }) {
           )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Info label={tr('loadDetails.fields.status', 'Status')} value={String(loadDetails?.status || tr('common.na', 'N/A'))} />
-            <Info label={tr('loadDetails.fields.workflow', 'Workflow')} value={workflowDisplay} />
-            <Info
-              label={tr('loadDetails.fields.assignedDriver', 'Assigned Driver')}
-              value={String(
-                loadDetails?.assigned_driver_name || (loadDetails?.assigned_driver ? tr('myLoads.status.assigned', 'Assigned') : tr('common.na', 'N/A'))
-              )}
-            />
-            <Info
-              label={tr('loadDetails.fields.shipper', 'Shipper')}
-              value={String(loadDetails?.shipper_company_name || loadDetails?.shipper_name || tr('common.na', 'N/A'))}
-            />
-            <Info label={tr('loadDetails.fields.origin', 'Origin')} value={String(loadDetails?.origin || tr('common.na', 'N/A'))} />
-            <Info label={tr('loadDetails.fields.destination', 'Destination')} value={String(loadDetails?.destination || tr('common.na', 'N/A'))} />
-            <Info label={tr('loadDetails.fields.pickup', 'Pickup')} value={String(loadDetails?.pickup_date || tr('common.tbd', 'TBD'))} />
-            <Info label={tr('loadDetails.fields.delivery', 'Delivery')} value={String(loadDetails?.delivery_date || tr('common.tbd', 'TBD'))} />
-            <Info label={tr('loadDetails.fields.equipment', 'Equipment')} value={String(loadDetails?.equipment_type || tr('common.na', 'N/A'))} />
-            <Info
-              label={tr('loadDetails.fields.weight', 'Weight')}
-              value={loadDetails?.weight != null ? String(loadDetails.weight) : tr('common.na', 'N/A')}
-            />
-            <Info
-              label={tr('loadDetails.fields.rate', 'Rate')}
-              value={
-                loadDetails?.total_rate != null
-                  ? fmtMoney(loadDetails.total_rate)
-                  : (loadDetails?.rate != null ? fmtMoney(loadDetails.rate) : tr('common.na', 'N/A'))
-              }
-            />
+            <Info label="Status" value={String(loadDetails?.status || 'N/A')} />
+            <Info label="Workflow" value={String(loadDetails?.workflow_status || 'N/A')} />
+            <Info label="Assigned Driver" value={String(loadDetails?.assigned_driver_name || (loadDetails?.assigned_driver ? 'Assigned' : 'N/A'))} />
+            <Info label="Shipper" value={String(loadDetails?.shipper_company_name || loadDetails?.shipper_name || 'N/A')} />
+            <Info label="Origin" value={String(loadDetails?.origin || 'N/A')} />
+            <Info label="Destination" value={String(loadDetails?.destination || 'N/A')} />
+            <Info label="Pickup" value={String(loadDetails?.pickup_date || 'TBD')} />
+            <Info label="Delivery" value={String(loadDetails?.delivery_date || 'TBD')} />
           </div>
 
           <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
               <div>
-                <div style={{ fontWeight: 800, color: '#111827' }}>{tr('loadDetails.docs.title', 'Documents')}</div>
-                <div style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>{tr('loadDetails.docs.subtitle', 'Rate Confirmation, BoL, and PoD for this load.')}</div>
+                <div style={{ fontWeight: 800, color: '#111827' }}>Rate Confirmation Signatures</div>
+                <div style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>Carrier signs after shipper.</div>
+              </div>
+              <button
+                className="btn small-cd"
+                type="button"
+                onClick={carrierSignRateConfirmation}
+                disabled={signing || Boolean(rcSignature?.carrierSignedAt) || loadLoading || !rcSigHasInk}
+              >
+                {rcSignature?.carrierSignedAt ? 'Carrier Signed' : signing ? 'Signing…' : 'Sign RC (Carrier)'}
+              </button>
+            </div>
+
+            {signError && (
+              <div style={{ marginTop: 10, padding: 10, background: '#fee2e2', color: '#991b1b', borderRadius: 8 }}>{signError}</div>
+            )}
+
+            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Info label="Shipper Signed" value={rcSignature?.shipperSignedAt ? 'Yes' : 'No'} />
+              <Info label="Carrier Signed" value={rcSignature?.carrierSignedAt ? 'Yes' : 'No'} />
+            </div>
+
+            {!rcSignature?.carrierSignedAt && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ color: '#6b7280', fontSize: 13, marginBottom: 8 }}>Signature (draw)</div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                  <div>
+                    <canvas
+                      ref={rcSigCanvasRef}
+                      onPointerDown={rcSigPointerDown}
+                      onPointerMove={rcSigPointerMove}
+                      onPointerUp={rcSigPointerUp}
+                      onPointerLeave={rcSigPointerUp}
+                      style={{ background: '#ffffff', borderRadius: 10, border: '1px solid #e5e7eb', touchAction: 'none' }}
+                    />
+                    <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+                      {rcSigHasInk ? 'Signature captured.' : 'Draw your signature in the box.'}
+                    </div>
+                  </div>
+                  <button className="btn small ghost-cd" type="button" onClick={clearRcSig}>
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 800, color: '#111827' }}>Rate Confirmation</div>
+                <div style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>Open the RC before signing.</div>
+              </div>
+              {rcDoc?.url ? (
+                <a href={rcDoc.url} target="_blank" rel="noreferrer" className="btn small ghost-cd">
+                  Open RC
+                </a>
+              ) : (
+                <span style={{ color: '#6b7280', fontSize: 13 }}>No RC uploaded yet.</span>
+              )}
+            </div>
+          </section>
+
+          <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 800, color: '#111827' }}>Documents</div>
+                <div style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>Load-linked document vault.</div>
               </div>
               <button className="btn small ghost-cd" type="button" onClick={fetchDocs} disabled={docsLoading}>
-                {docsLoading ? tr('loadDetails.docs.refreshing', 'Refreshing…') : tr('common.refresh', 'Refresh')}
+                {docsLoading ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
 
@@ -264,19 +388,41 @@ export default function LoadDetailsModal({ load, onClose }) {
               <div style={{ marginTop: 10, padding: 10, background: '#fee2e2', color: '#991b1b', borderRadius: 8 }}>{docsError}</div>
             )}
 
-            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-              <PrimaryDoc label={tr('loadDetails.docs.rateConfirmation', 'Rate Confirmation')} doc={rcDoc} onOpen={openDocumentUrl} tr={tr} />
-              <PrimaryDoc label={tr('loadDetails.docs.bol', 'BoL')} doc={bolDoc} onOpen={openDocumentUrl} tr={tr} />
-              <PrimaryDoc label={tr('loadDetails.docs.pod', 'PoD')} doc={podDoc} onOpen={openDocumentUrl} tr={tr} />
+            <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <select
+                value={uploadKind}
+                onChange={(e) => setUploadKind(e.target.value)}
+                style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid #e5e7eb', background: 'white' }}
+                disabled={uploading}
+              >
+                <option value="OTHER">Other</option>
+                <option value="BOL">BOL</option>
+                <option value="POD">POD</option>
+                <option value="RATE_CONFIRMATION">Rate Confirmation</option>
+              </select>
+              <label className={`btn small-cd ${uploading ? 'disabled' : ''}`} style={{ cursor: uploading ? 'not-allowed' : 'pointer' }}>
+                {uploading ? 'Uploading…' : 'Upload'}
+                <input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) onUploadDoc(f);
+                  }}
+                  disabled={uploading}
+                  style={{ display: 'none' }}
+                />
+              </label>
+              {uploadError && <span style={{ color: '#991b1b', fontSize: 13 }}>{uploadError}</span>}
             </div>
 
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {(documents || []).length === 0 ? (
-                <div style={{ color: '#6b7280' }}>{tr('loadDetails.docs.empty', 'No documents uploaded yet.')}</div>
+                <div style={{ color: '#6b7280' }}>No documents uploaded yet.</div>
               ) : (
                 (documents || []).map((d) => {
                   const url = String(d?.url || '').trim();
-                  const isEpodPointer = url.toLowerCase().startsWith('epod:');
                   const kind = String(d?.kind || 'OTHER');
                   const filename = String(d?.filename || '').trim();
                   return (
@@ -295,17 +441,15 @@ export default function LoadDetailsModal({ load, onClose }) {
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 700, color: '#111827' }}>{kind}</div>
                         <div style={{ color: '#6b7280', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {filename || (isEpodPointer ? tr('loadDetails.docs.epodRecorded', 'ePOD recorded') : '—')}
+                          {filename || '—'}
                         </div>
                       </div>
-                      {url && !isEpodPointer ? (
-                        <button className="btn small ghost-cd" type="button" onClick={() => openDocumentUrl(url)}>
-                          {tr('common.open', 'Open')}
-                        </button>
-                      ) : isEpodPointer ? (
-                        <span style={{ color: '#6b7280' }}>{tr('loadDetails.docs.recorded', 'Recorded')}</span>
+                      {url ? (
+                        <a href={url} target="_blank" rel="noreferrer" className="btn small ghost-cd">
+                          Open
+                        </a>
                       ) : (
-                        <span style={{ color: '#6b7280' }}>{tr('loadDetails.docs.noUrl', 'No URL')}</span>
+                        <span style={{ color: '#6b7280' }}>No URL</span>
                       )}
                     </div>
                   );
@@ -314,30 +458,6 @@ export default function LoadDetailsModal({ load, onClose }) {
             </div>
           </section>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function PrimaryDoc({ label, doc, onOpen, tr }) {
-  const url = String(doc?.url || '').trim();
-  const filename = String(doc?.filename || '').trim();
-  const isEpodPointer = url.toLowerCase().startsWith('epod:');
-  const openable = !!url && !isEpodPointer;
-  return (
-    <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontWeight: 800, color: '#111827' }}>{label}</div>
-      <div style={{ color: '#6b7280', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {filename || (isEpodPointer ? tr('loadDetails.docs.epodRecorded', 'ePOD recorded') : (url ? tr('loadDetails.docs.available', 'Document available') : tr('loadDetails.docs.notAvailable', 'Not available')))}
-      </div>
-      <div style={{ marginTop: 'auto' }}>
-        {openable ? (
-          <button className="btn small ghost-cd" type="button" onClick={() => onOpen && onOpen(url)}>
-            {tr('common.open', 'Open')}
-          </button>
-        ) : (
-          <span style={{ color: '#6b7280', fontSize: 13 }}>—</span>
-        )}
       </div>
     </div>
   );

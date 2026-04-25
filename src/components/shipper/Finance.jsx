@@ -18,9 +18,8 @@ export default function Finance() {
   const statuses = ['All Status', 'Paid', 'Pending', 'Overdue', 'Disputed'];
 
   const [activeTab, setActiveTab] = useState('Overview');
-  const tabs = ['Overview', 'Invoices', 'Payments', 'Factoring'];
+  const tabs = ['Overview', 'Invoices', 'Payments', 'Factoring', 'Banking'];
   const [showRatePanel, setShowRatePanel] = useState(false);
-  const [activeFactoringAgent, setActiveFactoringAgent] = useState('Apex Financial');
 
   const [financeLoading, setFinanceLoading] = useState(true);
   const [financeError, setFinanceError] = useState('');
@@ -32,30 +31,6 @@ export default function Finance() {
   const [disputeModal, setDisputeModal] = useState({ open: false, invoiceId: '', reason: '' });
   const [paymentModal, setPaymentModal] = useState({ open: false, invoiceId: '', amount: '' });
   const [modalError, setModalError] = useState('');
-
-  const factoringAgents = [
-    {
-      name: 'Apex Financial',
-      email: 'ops@apexfinancial.com',
-      phone: '(888) 555-0142',
-      response: 'Avg response: 15 min',
-      status: 'Active',
-    },
-    {
-      name: 'TrueRate Capital',
-      email: 'support@trueratecapital.com',
-      phone: '(877) 555-0135',
-      response: 'Avg response: 25 min',
-      status: 'Active',
-    },
-    {
-      name: 'QuickPay Freight',
-      email: 'agents@quickpayfreight.com',
-      phone: '(866) 555-0187',
-      response: 'Avg response: 35 min',
-      status: 'Available',
-    },
-  ];
 
   const getInvoiceId = (inv) => {
     const id = inv?.invoice_id || inv?.invoiceId || inv?.id || inv?.invoice_number;
@@ -167,10 +142,6 @@ export default function Finance() {
 
   const receivedTotal = useMemo(() => {
     return (receivedInvoices || []).reduce((sum, inv) => sum + Number(inv?.amount_total || 0), 0);
-  }, [receivedInvoices]);
-
-  const overdueCount = useMemo(() => {
-    return (receivedInvoices || []).filter((inv) => String(inv?.status || '').toLowerCase() === 'overdue').length;
   }, [receivedInvoices]);
 
   return (
@@ -403,10 +374,10 @@ export default function Finance() {
           </div>
         </div>
         <div className="card finance-card">
-          <div className="card-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
+          <div className="card-icon"><i className="fa-solid fa-bank"></i></div>
           <div>
-            <div className="muted">Overdue Invoices</div>
-            <div className="finance-num">{overdueCount}</div>
+            <div className="muted">Connected Accounts</div>
+            <div className="finance-num">3</div>
           </div>
         </div>
         <div className="card finance-card">
@@ -462,18 +433,14 @@ export default function Finance() {
               <button className="btn small-cd" style={{width:'100%',marginBottom:12}} onClick={refresh} disabled={financeLoading}>
                 Refresh
               </button>
-              <button className="btn ghost-cd small" style={{width:'100%',marginBottom:8}} onClick={() => setActiveTab('Invoices')}>
+              <button className="btn ghost-cd small" style={{width:'100%',marginBottom:8}} onClick={() => setShowRatePanel(true)}>
                 Generate Rate Confirmation
               </button>
-              <button
-                className="btn ghost-cd small"
-                style={{width:'100%',marginBottom:8}}
-                onClick={() => {
-                  setActiveFactoringAgent('Apex Financial');
-                  setActiveTab('Factoring');
-                }}
-              >
+              <button className="btn ghost-cd small" style={{width:'100%',marginBottom:8}}>
                 Send Payment Reminder
+              </button>
+              <button className="btn ghost-cd small" style={{width:'100%'}}>
+                Connect Bank Account
               </button>
             </div>
           </aside>
@@ -665,61 +632,6 @@ export default function Finance() {
                 <button className="btn-num-active">1</button>
                 <button className="btn-num" disabled>Next</button>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : activeTab === 'Factoring' ? (
-        <div className="finance-left">
-          <div className="card invoices-card" style={{ padding: 16 }}>
-            <h3 style={{ marginTop: 0, marginBottom: 10 }}>Factoring Agents</h3>
-            <div className="muted" style={{ marginBottom: 12 }}>
-              Select an agent to send a payment reminder and coordinate invoice follow-up.
-            </div>
-
-            <div style={{ display: 'grid', gap: 12 }}>
-              {factoringAgents.map((agent) => {
-                const isActive = activeFactoringAgent === agent.name;
-                return (
-                  <div
-                    key={agent.name}
-                    style={{
-                      border: isActive ? '2px solid #3B57A7' : '1px solid #e5e7eb',
-                      background: isActive ? 'rgba(59, 87, 167, 0.08)' : '#fff',
-                      borderRadius: 10,
-                      padding: 12,
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: 12,
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 700 }}>{agent.name}</div>
-                      <div className="muted" style={{ fontSize: 13 }}>{agent.email} · {agent.phone}</div>
-                      <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{agent.response}</div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className={`int-status-badge ${agent.status === 'Active' ? 'active' : 'pending'}`}>{agent.status}</span>
-                      <button
-                        className="btn small ghost-cd"
-                        type="button"
-                        onClick={() => setActiveFactoringAgent(agent.name)}
-                      >
-                        {isActive ? 'Active' : 'Set Active'}
-                      </button>
-                      <button
-                        className="btn small-cd"
-                        type="button"
-                        onClick={() => {
-                          window.location.href = `mailto:${agent.email}?subject=${encodeURIComponent('Payment Reminder')}&body=${encodeURIComponent('Hello, please provide an update on outstanding payment processing for our pending invoices.')}`;
-                        }}
-                      >
-                        Send Reminder
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
         </div>

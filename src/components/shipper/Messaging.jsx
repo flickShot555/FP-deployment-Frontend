@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import '../../styles/carrier/Messaging.css';
 import { getJson, openEventSource, postJson } from '../../api/http';
-import { AUTO_REFRESH_MS } from '../../constants/refresh';
 
 function initials(value) {
   const s = String(value || '').trim();
@@ -29,6 +28,8 @@ export default function Messaging({ initialThreadId = null } = {}) {
   const [threadLoading, setThreadLoading] = useState(false);
   const [error, setError] = useState('');
   const streamRef = React.useRef(null);
+  const threadsStreamRef = React.useRef(null);
+  const unreadRefreshTimerRef = React.useRef(null);
   const didInitSelectRef = React.useRef(false);
 
   const [showChatMobile, setShowChatMobile] = useState(false);
@@ -97,7 +98,6 @@ export default function Messaging({ initialThreadId = null } = {}) {
               if (!next.find(m => m.id === payload.message.id)) next.push(payload.message);
               return next;
             });
-            refreshThreads().catch(() => {});
             postJson(`/messaging/threads/${thread.id}/read`, {}).then(() => refreshUnread().catch(() => {})).catch(() => {});
           }
         } catch {
@@ -157,9 +157,17 @@ export default function Messaging({ initialThreadId = null } = {}) {
     })();
     return () => {
       cancelled = true;
+      if (unreadRefreshTimerRef.current) {
+        clearTimeout(unreadRefreshTimerRef.current);
+        unreadRefreshTimerRef.current = null;
+      }
       if (streamRef.current) {
         try { streamRef.current.close(); } catch { /* ignore */ }
         streamRef.current = null;
+      }
+      if (threadsStreamRef.current) {
+        try { threadsStreamRef.current.close(); } catch { /* ignore */ }
+        threadsStreamRef.current = null;
       }
     };
   }, []);
@@ -181,29 +189,72 @@ export default function Messaging({ initialThreadId = null } = {}) {
     }
   }, [initialThreadId, threads, selectedThread]);
 
+  // Real-time sidebar updates via SSE (best-effort)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (threadsStreamRef.current) {
+          try { threadsStreamRef.current.close(); } catch { /* ignore */ }
+          threadsStreamRef.current = null;
+        }
+
+        const since = (threads || []).reduce((m, t) => Math.max(m, Number(t.updated_at || 0)), 0);
+        const es = await openEventSource('/messaging/threads/stream', { since, limit: 200 });
+        threadsStreamRef.current = es;
+        es.onmessage = (evt) => {
+          if (cancelled) return;
+          try {
+            const payload = JSON.parse(evt.data);
+            if (payload?.type === 'threads' && Array.isArray(payload.threads)) {
+              const incoming = payload.threads;
+              setThreads((prev) => {
+                const map = new Map((prev || []).map(t => [t.id, t]));
+                incoming.forEach((t) => {
+                  if (!t?.id) return;
+                  map.set(t.id, { ...(map.get(t.id) || {}), ...t });
+                });
+                const out = Array.from(map.values());
+                out.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0));
+                return out;
+              });
+
+              if (unreadRefreshTimerRef.current) clearTimeout(unreadRefreshTimerRef.current);
+              unreadRefreshTimerRef.current = setTimeout(() => {
+                refreshUnread().catch(() => {});
+              }, 400);
+              return;
+            }
+
+            if (payload?.type === 'unread_changed') {
+              if (unreadRefreshTimerRef.current) clearTimeout(unreadRefreshTimerRef.current);
+              unreadRefreshTimerRef.current = setTimeout(() => {
+                refreshUnread().catch(() => {});
+              }, 250);
+            }
+          } catch {
+            // ignore
+          }
+        };
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSend = async () => {
     if (!message.trim() || !selectedThread) return;
+    if (selectedThread.is_read_only) return;
     const text = message.trim();
     setMessage('');
     await postJson(`/messaging/threads/${selectedThread.id}/messages`, { text });
     postJson(`/messaging/threads/${selectedThread.id}/read`, {}).catch(() => {});
-    await refreshThreads();
     refreshUnread().catch(() => {});
-    await selectThread({ ...selectedThread });
   };
-
-  // Lightweight unread refresh (keeps badges current if SSE is disconnected)
-  useEffect(() => {
-    let alive = true;
-    const id = setInterval(() => {
-      if (!alive) return;
-      refreshUnread().catch(() => {});
-    }, AUTO_REFRESH_MS);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, []);
 
   const handleSelectChat = (thread) => {
     selectThread(thread);
@@ -429,19 +480,27 @@ export default function Messaging({ initialThreadId = null } = {}) {
               ))}
             </div>
 
-            <div className="message-input-area">
-              <input
-                className="message-input"
-                type="text"
-                placeholder="Type your message..."
-                value={message}
-                onChange={e => setMessage(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-              />
-              <button className="send-btn" onClick={handleSend}>
-                <i className="fa-solid fa-paper-plane"></i>
-              </button>
-            </div>
+            {selectedThread.is_read_only ? (
+              <div className="message-input-area" style={{ justifyContent: 'center', opacity: 0.85 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>
+                  Chat ended for this load (read-only).
+                </div>
+              </div>
+            ) : (
+              <div className="message-input-area">
+                <input
+                  className="message-input"
+                  type="text"
+                  placeholder="Type your message..."
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSend()}
+                />
+                <button className="send-btn" onClick={handleSend}>
+                  <i className="fa-solid fa-paper-plane"></i>
+                </button>
+              </div>
+            )}
           </main>
         )}
 
