@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import '../../styles/carrier/Settings.css';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../config';
@@ -15,28 +15,72 @@ export default function Settings() {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [formData, setFormData] = useState({
     // Company Profile
-    companyName: 'TransLogistics Inc.',
-    phoneNumber: '(555) 123-4567',
-    address: '1234 Freight Ave, Logistics City, TX 75001',
-    email: 'contact@translogistics.com',
-    
+    companyName: '',
+    phoneNumber: '',
+    address: '',
+    email: '',
+
     // Federal Information
-    dotNumber: '2847563',
-    mcNumber: '928475',
-    taxId: 'XX-XXXXXXX23',
-    fmcsaSynced: true,
-    
-    // Banking Information
-    bankName: 'First National Bank',
-    routingNumber: '••••••••123',
-    accountNumber: '••••••••••4567',
+    dotNumber: '',
+    mcNumber: '',
+    taxId: '',
+    fmcsaSynced: false,
+
+    // Banking Information (UI is hidden/commented out, but values remain persisted)
+    bankName: '',
+    routingNumber: '',
+    accountNumber: '',
     accountType: 'Business Checking',
-    
+
     // Contact Information
-    dispatchContact: 'dispatch@translogistics.com',
-    safetyContact: 'safety@translogistics.com',
-    billingContact: 'billing@translogistics.com'
+    dispatchContact: '',
+    safetyContact: '',
+    billingContact: '',
   });
+
+  const [loadedFormData, setLoadedFormData] = useState(null);
+
+  const settingsFieldKeys = useMemo(() => (
+    [
+      'companyName',
+      'phoneNumber',
+      'address',
+      'email',
+      'dotNumber',
+      'mcNumber',
+      'taxId',
+      'fmcsaSynced',
+      'bankName',
+      'routingNumber',
+      'accountNumber',
+      'accountType',
+      'dispatchContact',
+      'safetyContact',
+      'billingContact',
+    ]
+  ), []);
+
+  const pickKnownSettings = (raw) => {
+    const out = {};
+    const obj = (raw && typeof raw === 'object') ? raw : {};
+    settingsFieldKeys.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        out[key] = obj[key];
+      }
+    });
+    return out;
+  };
+
+  const computeChangedFields = (baseline, next) => {
+    const base = (baseline && typeof baseline === 'object') ? baseline : {};
+    const changed = {};
+    settingsFieldKeys.forEach((key) => {
+      const a = base[key];
+      const b = next?.[key];
+      if (a !== b) changed[key] = b;
+    });
+    return changed;
+  };
 
   const [prefsLoading, setPrefsLoading] = useState(false);
   const [prefsSaving, setPrefsSaving] = useState(false);
@@ -239,25 +283,48 @@ export default function Settings() {
       try {
         setLoadingProfile(true);
         const token = await currentUser.getIdToken();
-        const resp = await fetch(`${API_URL}/onboarding/data`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data?.detail || 'Failed to load profile');
 
-        const d = data?.data || {};
-        setFormData(prev => ({
-          ...prev,
-          companyName: d.companyName || prev.companyName || '',
-          phoneNumber: d.phone || prev.phoneNumber || '',
-          address: d.address || prev.address || '',
-          email: d.email || prev.email || '',
-          dotNumber: d.dotNumber || prev.dotNumber || '',
-          mcNumber: d.mcNumber || prev.mcNumber || '',
-        }));
+        const [apiResp, settingsResp] = await Promise.all([
+          fetch(`${API_URL}/onboarding/data`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          }),
+          fetch(`${API_URL}/onboarding/settings`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          }),
+        ]);
+
+        const apiData = await apiResp.json().catch(() => ({}));
+        if (!apiResp.ok) throw new Error(apiData?.detail || 'Failed to load profile');
+
+        const settingsData = await settingsResp.json().catch(() => ({}));
+        if (!settingsResp.ok) throw new Error(settingsData?.detail || 'Failed to load settings');
+
+        const d = apiData?.data || {};
+        const apiPatch = {
+          companyName: d.companyName || '',
+          phoneNumber: d.phone || '',
+          address: d.address || '',
+          email: d.email || '',
+          dotNumber: d.dotNumber || '',
+          mcNumber: d.mcNumber || '',
+        };
+
+        const serverSettings = pickKnownSettings(settingsData?.settings);
+
+        const merged = {
+          ...formData,
+          ...apiPatch,
+          ...serverSettings,
+        };
+
+        setFormData(merged);
+        setLoadedFormData(merged);
       } catch (e) {
         console.error(e);
         setMessage({ type: 'error', text: e?.message || 'Failed to load profile' });
@@ -266,6 +333,7 @@ export default function Settings() {
       }
     };
     run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
   // User Management Data
@@ -459,55 +527,63 @@ export default function Settings() {
       setMessage({ type: '', text: '' });
       const token = await currentUser.getIdToken();
 
-      const payload = {
-        companyName: formData.companyName,
-        dotNumber: formData.dotNumber,
-        mcNumber: formData.mcNumber,
-        phone: formData.phoneNumber,
-        address: formData.address,
-      };
+      const changed = computeChangedFields(loadedFormData, formData);
+      if (!changed || Object.keys(changed).length === 0) {
+        setMessage({ type: 'success', text: 'No changes to save.' });
+        setTimeout(() => setMessage({ type: '', text: '' }), 2500);
+        return;
+      }
 
-      const resp = await fetch(`${API_URL}/onboarding/update-profile`, {
-        method: 'POST',
+      // 1) Persist ALL carrier settings fields to Firestore (onboarding/{uid}).
+      // 1) Persist ALL carrier settings fields through the backend API.
+      // Backend patches onboarding/{uid}.settings with only the changed keys.
+      const settingsResp = await fetch(`${API_URL}/onboarding/settings`, {
+        method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ settings: changed }),
       });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data?.detail || 'Failed to save changes');
+      const settingsData = await settingsResp.json().catch(() => ({}));
+      if (!settingsResp.ok) throw new Error(settingsData?.detail || 'Failed to save settings');
 
+      // 2) Keep the backend/user-profile in sync for the core fields other parts of the app depend on.
+      const coreKeys = ['companyName', 'dotNumber', 'mcNumber', 'phoneNumber', 'address'];
+      const coreChanged = {};
+      coreKeys.forEach((k) => {
+        if (Object.prototype.hasOwnProperty.call(changed, k)) coreChanged[k] = changed[k];
+      });
+
+      if (Object.keys(coreChanged).length > 0) {
+        const payload = {
+          companyName: formData.companyName,
+          dotNumber: formData.dotNumber,
+          mcNumber: formData.mcNumber,
+          phone: formData.phoneNumber,
+          address: formData.address,
+        };
+
+        const resp = await fetch(`${API_URL}/onboarding/update-profile`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.detail || 'Failed to save changes');
+      }
+
+      setLoadedFormData({ ...formData });
       setMessage({ type: 'success', text: 'Company profile saved successfully.' });
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
-
-      // Re-load canonical data so all fields are in sync
-      setLoadingProfile(true);
-      const refetch = await fetch(`${API_URL}/onboarding/data`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      const refetchData = await refetch.json().catch(() => ({}));
-      if (refetch.ok) {
-        const d = refetchData?.data || {};
-        setFormData(prev => ({
-          ...prev,
-          companyName: d.companyName || prev.companyName || '',
-          phoneNumber: d.phone || prev.phoneNumber || '',
-          address: d.address || prev.address || '',
-          email: d.email || prev.email || '',
-          dotNumber: d.dotNumber || prev.dotNumber || '',
-          mcNumber: d.mcNumber || prev.mcNumber || '',
-        }));
-      }
     } catch (e) {
       console.error(e);
       setMessage({ type: 'error', text: e?.message || 'Failed to save changes' });
     } finally {
       setSavingProfile(false);
-      setLoadingProfile(false);
     }
   };
 
@@ -659,6 +735,7 @@ export default function Settings() {
                 </div>
 
                 {/* Banking Information */}
+                {/*
                 <div className="settings-section">
                   <h3 className="section-title">Banking Information</h3>
                   <div className="form-grid">
@@ -699,6 +776,7 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
+                */}
               </div>
 
               {/* Right Column */}
